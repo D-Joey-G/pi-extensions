@@ -23,7 +23,7 @@ It cannot edit your files. That's the point.
 ## Install
 
 ```sh
-pi install git:github.com/<you>/pi-pair
+pi install git:github.com/joeygoldman/pi-pair
 ```
 
 Or for local development, point pi at the checkout:
@@ -42,11 +42,13 @@ Requires pi ≥ 0.84.1 and Node ≥ 22.19.0.
 | `/pair off` | Stop. Restores your original tool set. |
 | `/pair quiet` · `normal` · `chatty` | How eagerly it speaks up. |
 | `/pair look [question]` | Ask for its read right now, bypassing pacing. |
-| `/pair mute` / `unmute` | Keep watching, stop talking. |
+| `/pair mute` / `unmute` | Stop volunteering remarks. `/pair look` still works. |
 | `/pair notes` | Decisions, open questions, and risks from this session. |
 | `/pair drive <task>` | Hand over the keyboard for one scoped task. |
 | `/pair navigate` | Take it back. |
 | `/pair status` | Current role, cadence, note count. |
+| `/pair config` | Show every setting and its current value. |
+| `/pair set <key> <value>` | Change one setting. |
 | `Alt+G` | Same as `/pair look`. |
 
 > pi reserves every `Ctrl+<letter>`, so the shortcut lives under Alt. On macOS
@@ -67,16 +69,18 @@ minutes, not a running commentary.
 ## How it works
 
 A file watcher notices your edits and waits for you to pause. The diff since the
-agent last looked is sent to it privately — it never clutters your transcript.
-The agent must then answer with exactly one tool call: `interject` if it has
-something worth interrupting you for, or `stay_quiet` if it doesn't. Most of the
-time the right answer is `stay_quiet`, and the tooling is built so that's the
-easy path.
+agent last looked is sent to it privately — an unprompted look never appears in
+your transcript. (`/pair look` is your question, so that one does.) The agent
+must then answer with exactly one tool call: `interject` if it has something
+worth interrupting you for, or `stay_quiet` if it doesn't. Most of the time the
+right answer is `stay_quiet`, and the tooling is built so that's the easy path.
 
-Two separate throttles keep it from becoming noise. A gap clock, measured from
-the last time it actually *spoke*, and an hourly cap on how many times it may
-*look* (each look is a model request you pay for). Edits too small to be worth a
-look aren't dropped — they accumulate until they add up to something.
+Three throttles keep it from becoming noise. A gap clock, measured from the last
+time it actually *spoke*; an hourly cap on how many times it may *look* (each
+look is a model request you pay for); and a rule that it never starts a second
+look while it is still thinking about the first. Edits too small to be worth a
+look aren't dropped — they accumulate until they add up to something, and once
+shown they are never shown again.
 
 It also leans in without being asked when a command you ran in the shell fails.
 
@@ -85,25 +89,53 @@ forking pi, is in [DESIGN.md](DESIGN.md).
 
 ## What it can and can't do
 
-**Can't:** write, edit, or delete any file. Enforced twice — by removing the tools
-and by blocking them at the call site — so it holds even if something else in
-your session changes the tool set.
+**Can:** `read`, `grep`, `ls`, `find`, and read-only shell commands (`git log`,
+`git diff`, `rg`, `npm test`, …) without asking.
 
-**Can:** read files, grep, and run read-only shell commands (`git log`, `git diff`,
-`rg`, `npm test`, …) without asking. Anything outside that allowlist prompts you
-first.
+**Can't:** everything else. The tool gate is an allowlist, not a list of known
+writers — a tool pi adds tomorrow, an MCP server you connect, or another
+extension's tool is refused because it isn't on the list, not permitted because
+nobody thought to ban it. Enforced twice, by trimming the active tool set and by
+blocking at the call site, so it holds even if something else in your session
+changes the tools.
 
-That screening is a heuristic, not a sandbox. It handles the obvious evasions —
-compound commands are judged segment by segment, and redirections and command
-substitutions always count as writes — but it isn't airtight. Set `strictBash` to
-block bash outright if you need the guarantee to be real.
+The cost is that read-only MCP tools are blocked too until you say otherwise:
+
+```sh
+/pair set extraReadOnlyTools mcp__sentry__get_issue,mcp__linear__get_issue
+```
+
+`bash` is the exception that has to be judged rather than listed. Commands are
+screened against a read-only allowlist, and anything else asks you first. That
+screening is a heuristic, not a sandbox — it handles the obvious evasions
+(compound commands are judged segment by segment; redirections and command
+substitutions always count as writes) but it isn't airtight:
+
+```sh
+/pair set strictBash true   # refuse bash outright
+```
 
 ## Configuration
 
-Cadence covers most of it. For the rest, the knobs are in `PairConfig`
-(`src/config.ts`): `settleMs`, `minGapMs`, `maxObservationsPerHour`,
-`minChangedLines`, `idleNudgeMs`, `maxPatchLines`, `maxFilesPerObservation`,
-`strictBash`, and `ignore` (globs on top of the built-in list).
+Cadence covers most of it. `/pair config` shows the rest, and `/pair set <key>
+<value>` changes one:
+
+| Key | What it does |
+| --- | --- |
+| `settleMs` | Quiet period before a burst of edits counts as finished. |
+| `minGapMs` | Minimum time between two unprompted remarks. |
+| `maxObservationsPerHour` | Cap on paid looks per rolling hour. |
+| `minChangedLines` | Bursts smaller than this wait for the next one. |
+| `idleNudgeMs` | Offer help after this long with no edits. `0` disables it. |
+| `maxPatchLines` | Truncate each file's diff before sending. |
+| `maxFilesPerObservation` | Cap on files described in one observation. |
+| `strictBash` | `true` refuses bash outright. |
+| `ignore` | Extra ignore globs, comma-separated. |
+| `extraReadOnlyTools` | Extra tools the navigator may call, comma-separated. |
+
+Settings survive a cadence change and are restored with the session. Cadence
+presets own the first five; setting one of those explicitly overrides the preset
+until you set it again.
 
 ## Known limitations
 
@@ -115,6 +147,9 @@ Cadence covers most of it. For the rest, the knobs are in `PairConfig`
 - **Very large repos.** The baseline caps at 5,000 files. Past that, the first
   edit to an unbaselined file reads as a new file. The widget says so when it
   happens.
+- **MCP tools are off by default.** The allowlist can't tell a read-only MCP tool
+  from a writing one, so it refuses both until you name them in
+  `extraReadOnlyTools`. The block message tells the agent to say so.
 
 ## Development
 

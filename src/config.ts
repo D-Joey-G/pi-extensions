@@ -20,6 +20,13 @@ export interface PairConfig {
   strictBash: boolean;
   /** Extra ignore globs on top of .gitignore and the built-in list. */
   ignore: string[];
+  /**
+   * Tool names the navigator may call on top of the built-in read-only set.
+   *
+   * Navigator mode is an allowlist, so MCP servers and other extensions'
+   * tools are blocked until named here — see `READ_ONLY_TOOLS`.
+   */
+  extraReadOnlyTools: string[];
 }
 
 const CADENCE_PRESETS: Record<
@@ -70,10 +77,74 @@ export function makeConfig(cadence: Cadence = "normal", overrides: Partial<PairC
     maxFilesPerObservation: 12,
     strictBash: false,
     ignore: [],
+    extraReadOnlyTools: [],
     ...overrides,
   };
 }
 
 export function isCadence(value: string): value is Cadence {
   return value === "quiet" || value === "normal" || value === "chatty";
+}
+
+/**
+ * Everything `/pair set` accepts, and how to parse it.
+ *
+ * Cadence is deliberately absent: it has its own subcommands and setting it
+ * replaces the whole preset block, which would make `/pair set` order-dependent.
+ */
+const NUMERIC_KEYS = [
+  "settleMs",
+  "minGapMs",
+  "maxObservationsPerHour",
+  "minChangedLines",
+  "idleNudgeMs",
+  "maxPatchLines",
+  "maxFilesPerObservation",
+] as const satisfies ReadonlyArray<keyof PairConfig>;
+
+const BOOLEAN_KEYS = ["strictBash"] as const satisfies ReadonlyArray<keyof PairConfig>;
+
+const LIST_KEYS = ["ignore", "extraReadOnlyTools"] as const satisfies ReadonlyArray<keyof PairConfig>;
+
+export const OVERRIDABLE_KEYS: readonly string[] = [...NUMERIC_KEYS, ...BOOLEAN_KEYS, ...LIST_KEYS];
+
+export type ParsedOverride = { ok: true; override: Partial<PairConfig> } | { ok: false; error: string };
+
+/** Parses one `key value` pair from `/pair set`. Values are validated, not trusted. */
+export function parseOverride(key: string, raw: string): ParsedOverride {
+  const value = raw.trim();
+  if (!OVERRIDABLE_KEYS.includes(key)) {
+    return { ok: false, error: `Unknown setting "${key}". Known: ${OVERRIDABLE_KEYS.join(", ")}.` };
+  }
+  if (value === "") return { ok: false, error: `Give a value: /pair set ${key} <value>` };
+
+  if ((NUMERIC_KEYS as readonly string[]).includes(key)) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return { ok: false, error: `${key} must be a number ≥ 0.` };
+    // Only idleNudgeMs is meaningfully zero (it disables the nudge); a zero
+    // budget or patch cap would silently switch the navigator off.
+    if (parsed === 0 && key !== "idleNudgeMs") return { ok: false, error: `${key} must be greater than 0.` };
+    return { ok: true, override: { [key]: parsed } };
+  }
+
+  if ((BOOLEAN_KEYS as readonly string[]).includes(key)) {
+    if (value !== "true" && value !== "false") return { ok: false, error: `${key} must be true or false.` };
+    return { ok: true, override: { [key]: value === "true" } };
+  }
+
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return { ok: true, override: { [key]: items } };
+}
+
+/** Renders the current settings for `/pair config`. */
+export function renderConfig(config: PairConfig): string {
+  const lines = [`cadence  ${config.cadence}`];
+  for (const key of OVERRIDABLE_KEYS) {
+    const value = config[key as keyof PairConfig];
+    lines.push(`${key.padEnd(23)}${Array.isArray(value) ? value.join(", ") || "—" : String(value)}`);
+  }
+  return lines.join("\n");
 }

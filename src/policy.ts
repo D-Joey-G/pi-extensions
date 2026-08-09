@@ -1,5 +1,5 @@
 import type { PairConfig } from "./config.js";
-import type { Observation, PolicyState, Trigger } from "./types.js";
+import type { Observation, PolicyState } from "./types.js";
 
 const HOUR_MS = 60 * 60_000;
 
@@ -25,13 +25,14 @@ export type Decision = { observe: true } | { observe: false; reason: string };
  * tear can't run up the bill.
  */
 export function shouldObserve(observation: Observation, state: PolicyState, config: PairConfig, now: number): Decision {
+  // The driver asked directly. Mute is about unprompted remarks, so it does not
+  // apply here — only the budget does, because a look is still a paid request.
+  if (observation.trigger === "manual") return withinBudget(state, config, now) ?? { observe: true };
+
   if (state.muted) return { observe: false, reason: "muted" };
 
-  // The driver asked directly, or something broke. Both bypass pacing.
-  const urgent: Trigger[] = ["manual", "failed-command"];
-  if (urgent.includes(observation.trigger)) {
-    return withinBudget(state, config, now) ?? { observe: true };
-  }
+  // Something broke. Unprompted, so mute still wins, but pacing does not.
+  if (observation.trigger === "failed-command") return withinBudget(state, config, now) ?? { observe: true };
 
   if (observation.trigger === "idle-nudge") {
     if (config.idleNudgeMs <= 0) return { observe: false, reason: "idle nudge disabled" };

@@ -35,6 +35,8 @@ export class EditWatcher {
     private readonly config: PairConfig,
     private readonly onBurst: (burst: EditBurst) => void,
     private readonly onEdit?: (at: number) => void,
+    /** Called when the watcher dies after startup, so the failure is not silent. */
+    private readonly onError?: (error: Error) => void,
   ) {}
 
   /**
@@ -58,14 +60,17 @@ export class EditWatcher {
 
     const touch = (path: string) => this.record(path);
     watcher.on("add", touch).on("change", touch).on("unlink", touch);
-    // A dead watcher would silently stop the whole pairing loop, so surface it.
-    watcher.on("error", () => {
-      void this.stop();
-    });
 
     await new Promise<void>((resolve, reject) => {
       watcher.once("ready", () => resolve());
       watcher.once("error", (error) => reject(error));
+    });
+
+    // Past startup a dead watcher would silently end the pairing loop while the
+    // widget still claimed to be watching, so tear down and tell the caller.
+    watcher.on("error", (error) => {
+      void this.stop();
+      this.onError?.(error instanceof Error ? error : new Error(String(error)));
     });
 
     // getWatched() lists every watched directory and its entries, where an
@@ -118,9 +123,5 @@ export class EditWatcher {
     const watcher = this.watcher;
     this.watcher = undefined;
     await watcher?.close();
-  }
-
-  get running(): boolean {
-    return this.watcher !== undefined;
   }
 }

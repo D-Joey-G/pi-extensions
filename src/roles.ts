@@ -1,11 +1,28 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Role } from "./types.js";
 
-/** Built-in tools that mutate the working tree. Never active in navigator mode. */
-export const MUTATING_TOOLS = ["write", "edit", "multi_edit", "apply_patch", "str_replace_editor"];
+/**
+ * Tools the navigator may call, as an allowlist rather than a denylist.
+ *
+ * The invariant is "the navigator cannot edit", and a denylist of known-bad
+ * tool names cannot deliver that: any tool pi adds, any MCP server, any other
+ * extension registering a writer would pass through unnamed. Inverting it means
+ * an unrecognised tool is refused rather than trusted, which is the failure
+ * mode we want. `bash` is here but screened separately by `isReadOnlyCommand`.
+ *
+ * The cost is that genuinely read-only MCP tools are blocked until the driver
+ * names them; `extraReadOnlyTools` is the escape hatch, and the block message
+ * says so.
+ */
+export const READ_ONLY_TOOLS = ["read", "grep", "ls", "find", "bash"];
 
 /** Tools this extension registers. Only meaningful while navigating. */
 export const PAIR_TOOLS = ["interject", "stay_quiet", "pair_note"];
+
+/** True when the navigator is permitted to call this tool at all. */
+export function isAllowedTool(name: string, extraReadOnlyTools: readonly string[]): boolean {
+  return READ_ONLY_TOOLS.includes(name) || PAIR_TOOLS.includes(name) || extraReadOnlyTools.includes(name);
+}
 
 /**
  * Commands the navigator may run without asking. Anything that inspects the
@@ -85,11 +102,18 @@ export function isReadOnlyCommand(command: string): boolean {
  * and back restores the driver's own tool configuration rather than pi's
  * defaults.
  */
-export function applyRole(pi: ExtensionAPI, role: Role, baseline: string[]): void {
+export function applyRole(
+  pi: ExtensionAPI,
+  role: Role,
+  baseline: string[],
+  extraReadOnlyTools: readonly string[] = [],
+): void {
   if (role === "driver") {
     pi.setActiveTools([...new Set([...baseline, ...PAIR_TOOLS])]);
     return;
   }
-  const readOnly = baseline.filter((name) => !MUTATING_TOOLS.includes(name));
+  // Intersect rather than subtract: the navigator gets what is both enabled in
+  // this session and known to be safe.
+  const readOnly = baseline.filter((name) => isAllowedTool(name, extraReadOnlyTools));
   pi.setActiveTools([...new Set([...readOnly, ...PAIR_TOOLS])]);
 }

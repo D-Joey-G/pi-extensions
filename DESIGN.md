@@ -64,7 +64,18 @@ heavily tested part of the codebase. The two clocks are asymmetric on purpose:
 
 Small bursts below `minChangedLines` aren't discarded — they merge into the next
 one (`mergeObservations`), so three small related edits eventually add up to one
-observation instead of vanishing.
+observation instead of vanishing. Once a merged burst is shown, the baseline
+advances for every file in it, not just the ones from the burst that tripped the
+threshold — otherwise the lines that rode along would show up again next time
+and the navigator would repeat itself.
+
+There is a third clock that isn't in `policy.ts`, because it isn't about pacing:
+the navigator never starts a second look while the first is still in flight
+(`busyReason`). Queuing observations behind an unanswered one interrupts the
+navigator rather than the driver, and arrives as a stale remark about code that
+has since moved. The flag is cleared by `agent_settled` rather than at send
+time — the send returns immediately and the turn runs after it. A direct
+`/pair look` is exempt: the driver asked, so the driver owns the timing.
 
 **Editorial judgement** decides whether to *speak*. When the navigator is shown a
 diff, it must answer with exactly one tool call: `interject` or `stay_quiet`. The
@@ -88,13 +99,29 @@ quietly change the driver's own tool configuration.
 
 While the agent is driving, the watcher stops feeding it observations — otherwise
 it would be reacting to its own diffs, which is a feedback loop rather than a
-pairing session.
+pairing session. Its writes still land in the snapshot baseline, so taking the
+keyboard back doesn't dump everything the agent just wrote onto the navigator as
+though the driver had typed it.
 
 ## Guarding the invariant
 
-Navigator mode drops `write`/`edit` from the active tool set *and* blocks them in
-`tool_call`, because the active tool set can be changed by other extensions or by
-the user mid-session, and the invariant should not depend on that.
+Navigator mode trims the active tool set *and* blocks at `tool_call`, because the
+active tool set can be changed by other extensions or by the user mid-session,
+and the invariant should not depend on that.
+
+Both gates are an **allowlist** (`READ_ONLY_TOOLS`), which is the part worth
+arguing about. A denylist of known writers — `write`, `edit`, `apply_patch` — is
+friendlier, and it was the first thing I wrote. It cannot deliver the promise
+above. The invariant is "cannot edit", and a denylist is only as good as its
+authors' knowledge of every tool that will ever be in the session: a tool pi adds
+next release, an MCP server the driver connects, another extension's helper. Each
+of those passes a denylist by default. Inverting it means the unknown case fails
+closed, which is the only version that matches what the mode claims to be.
+
+The cost is real and lands on MCP: a read-only `get_issue` tool is refused
+alongside a `create_pr` one, because nothing in the name distinguishes them.
+`extraReadOnlyTools` is the escape hatch, and the block message names it so the
+navigator can tell the driver what to run rather than just failing.
 
 `bash` is the interesting case. Blocking it outright makes the navigator useless —
 it can't run `git log`, can't check whether the tests pass. So commands are
@@ -104,7 +131,32 @@ match prompts the driver to confirm rather than being silently rejected.
 **This screening is a heuristic, not a sandbox.** It splits on shell operators so
 `cat x && rm -rf y` is judged on both halves, and treats any redirection or
 command substitution as a write. It will still be defeated by sufficiently
-creative shell. Set `strictBash` when the guarantee has to be real.
+creative shell. `strictBash` refuses `bash` entirely, which is the version with
+an actual guarantee behind it.
+
+## Mute is not silence
+
+`mute` suppresses everything the navigator would have volunteered — edit bursts,
+idle nudges, and the failed-command lean-in. It deliberately does not suppress
+`/pair look`, because that is the driver asking a question, and a mode where
+pressing the key does nothing at all reads as a broken shortcut rather than a
+respected preference. The same reasoning runs the other way for bash: while muted
+the navigator can still run allowlisted commands, but anything that would need a
+confirmation dialog is refused instead, since a dialog is a way of talking to
+someone who asked not to be talked to.
+
+## Surviving a restart
+
+State goes into the session transcript as custom entries (`pi/appendEntry`) and
+comes back on `session_start`. Notes always return. The rest — cadence, role,
+mute, `/pair set` overrides, and the captured tool baseline — only matters when
+pairing was on when the session ended, and in that case the watcher and tool set
+are brought back up with it.
+
+Restoring the label without the machinery was the tempting shortcut and is worse
+than not restoring at all: the widget claims to be watching a tree that nothing
+is watching, and the driver finds out when the first hour of work goes
+unremarked. Either the session is restored or it isn't.
 
 ## What would need upstream changes
 

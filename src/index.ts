@@ -4,10 +4,10 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { isCadence } from "./config.js";
+import { isCadence, OVERRIDABLE_KEYS, parseOverride, renderConfig } from "./config.js";
 import { PairController } from "./controller.js";
 import { renderNotes } from "./prompts.js";
-import { isReadOnlyCommand, MUTATING_TOOLS } from "./roles.js";
+import { isAllowedTool, isReadOnlyCommand } from "./roles.js";
 import { registerPairTools } from "./tools.js";
 import type { Cadence } from "./types.js";
 
@@ -15,34 +15,65 @@ const IDLE_TICK_MS = 60_000;
 /** Tail of a failed command's output to show the navigator. */
 const FAILURE_OUTPUT_CHARS = 2000;
 
-export default function pairCoding(pi: ExtensionAPI) {
-  const controller = new PairController(pi);
-  let idleTimer: NodeJS.Timeout | undefined;
+const SUBCOMMANDS = [
+  "on",
+  "off",
+  "quiet",
+  "normal",
+  "chatty",
+  "look",
+  "notes",
+  "mute",
+  "unmute",
+  "status",
+  "config",
+  "set",
+  "drive",
+  "navigate",
+] as const;
 
-  registerPairTools(pi, {
-    // The gap clock starts when the navigator speaks, not when it looks.
-    onInterject: (_kind, _message, ctx) => controller.noteInterjection(remember(ctx)),
-    onStayQuiet: () => {},
-    onNote: (note, ctx) => controller.addNote(note, remember(ctx)),
-  });
+export default function pairCoding(pi: ExtensionAPI) {
+  let idleTimer: NodeJS.Timeout | undefined;
 
   // Kept for the shutdown path, which has no ctx of its own.
   let lastCtx: ExtensionContext | undefined;
-  const remember = (ctx: ExtensionContext) => {
+  const remember = <T extends ExtensionContext>(ctx: T): T => {
     lastCtx = ctx;
     return ctx;
   };
 
-  pi.on("session_start", (_event, ctx) => {
+  const controller = new PairController(pi, {
+    onWatcherError: (error, ctx) => {
+      stopIdleLoop();
+      if (ctx.hasUI) ctx.ui.notify(`Pair mode stopped — the file watcher failed: ${error.message}`, "error");
+    },
+  });
+
+  registerPairTools(pi, {
+    // The gap clock starts when the navigator speaks, not when it looks.
+    onInterject: (_kind, _message, ctx) => controller.noteInterjection(remember(ctx)),
+    onStayQuiet: (reason, ctx) => controller.noteQuiet(reason, remember(ctx)),
+    onNote: (note, ctx) => controller.addNote(note, remember(ctx)),
+  });
+
+  pi.on("session_start", async (_event, ctx) => {
     remember(ctx);
-    controller.restore(ctx);
+    await controller.restore(ctx);
+    // Pairing may have been on when the session ended, in which case restore
+    // brought the watcher back up and the idle loop has to come with it.
+    if (controller.isActive) startIdleLoop(ctx);
     controller.updateUi(ctx);
   });
 
   pi.on("session_shutdown", async () => {
-    if (idleTimer) clearInterval(idleTimer);
-    idleTimer = undefined;
+    stopIdleLoop();
     await controller.stop(lastCtx);
+  });
+
+  // The navigator's turn is over, so the next burst may be shown.
+  pi.on("agent_settled", (_event, ctx) => {
+    remember(ctx);
+    controller.noteAgentSettled(ctx);
   });
 
   // Give the navigator its role instructions on every turn, and keep the
@@ -58,20 +89,33 @@ export default function pairCoding(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     remember(ctx);
     if (!controller.isActive || controller.currentRole !== "navigator") return;
+    const config = controller.currentConfig;
 
-    if (MUTATING_TOOLS.includes(event.toolName)) {
+    if (!isAllowedTool(event.toolName, config.extraReadOnlyTools)) {
       return {
         block: true,
         reason:
-          "You are the navigator — the driver edits the files. Say what you would change and why, or use /pair drive to ask for the keyboard.",
+          `You are the navigator — the driver edits the files, and \`${event.toolName}\` is not on the read-only list. ` +
+          "Say what you would change and why, or use /pair drive to ask for the keyboard. " +
+          `If this tool only reads, the driver can allow it with: /pair set extraReadOnlyTools ${event.toolName}`,
       };
     }
 
     if (event.toolName === "bash") {
+      if (config.strictBash) {
+        return { block: true, reason: "strictBash is on: the navigator may not run shell commands at all." };
+      }
       const command = String((event.input as { command?: unknown } | undefined)?.command ?? "");
       if (isReadOnlyCommand(command)) return;
-      if (controller.isMuted || !ctx.hasUI) {
-        return { block: true, reason: "Navigator mode allows read-only shell commands only." };
+      // Without a UI there is nobody to ask, and while muted the driver has
+      // asked not to be spoken to — a confirm dialog is speaking to them.
+      if (!ctx.hasUI || controller.isMuted) {
+        return {
+          block: true,
+          reason: controller.isMuted
+            ? "Navigator is muted, so commands needing the driver's confirmation are refused. Read-only commands still work."
+            : "Navigator mode allows read-only shell commands only.",
+        };
       }
       const ok = await ctx.ui.confirm("Navigator wants to run a command", command);
       if (!ok) return { block: true, reason: "Driver declined the command." };
@@ -107,23 +151,9 @@ export default function pairCoding(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("pair", {
-    description: "Pair-coding mode: you drive, the agent navigates (on|off|quiet|normal|chatty|look|notes|mute|status)",
+    description: `Pair-coding mode: you drive, the agent navigates (${SUBCOMMANDS.join("|")})`,
     getArgumentCompletions: (prefix: string) => {
-      const subcommands = [
-        "on",
-        "off",
-        "quiet",
-        "normal",
-        "chatty",
-        "look",
-        "notes",
-        "mute",
-        "unmute",
-        "status",
-        "drive",
-        "navigate",
-      ];
-      const items = subcommands.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
+      const items = SUBCOMMANDS.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
       return items.length > 0 ? items : null;
     },
     handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -164,10 +194,13 @@ export default function pairCoding(pi: ExtensionAPI) {
           return;
         }
 
-        case "look":
+        case "look": {
           if (!requireActive(ctx)) return;
-          await controller.lookNow(ctx, remainder || undefined);
+          const decision = await controller.lookNow(ctx, remainder || undefined);
+          // Silence here would look like the shortcut simply did nothing.
+          if (!decision.observe) ctx.ui.notify(`Not looking right now — ${decision.reason}.`, "warning");
           return;
+        }
 
         case "notes":
           ctx.ui.notify(renderNotes([...controller.sessionNotes]), "info");
@@ -176,7 +209,7 @@ export default function pairCoding(pi: ExtensionAPI) {
         case "mute":
           if (!requireActive(ctx)) return;
           controller.setMuted(true, ctx);
-          ctx.ui.notify("Muted. I'll keep watching but stay out of your way.", "info");
+          ctx.ui.notify("Muted. I'll keep watching but stay out of your way — /pair look still works.", "info");
           return;
 
         case "unmute":
@@ -184,6 +217,26 @@ export default function pairCoding(pi: ExtensionAPI) {
           controller.setMuted(false, ctx);
           ctx.ui.notify("Unmuted.", "info");
           return;
+
+        case "config":
+          ctx.ui.notify(renderConfig(controller.currentConfig), "info");
+          return;
+
+        case "set": {
+          const [key = "", ...valueParts] = rest;
+          if (!key) {
+            ctx.ui.notify(`Usage: /pair set <key> <value>. Keys: ${OVERRIDABLE_KEYS.join(", ")}.`, "warning");
+            return;
+          }
+          const parsed = parseOverride(key, valueParts.join(" "));
+          if (!parsed.ok) {
+            ctx.ui.notify(parsed.error, "warning");
+            return;
+          }
+          controller.setOverrides(parsed.override, ctx);
+          ctx.ui.notify(`${key} = ${valueParts.join(" ").trim()}`, "info");
+          return;
+        }
 
         case "drive": {
           if (!requireActive(ctx)) return;
@@ -213,10 +266,7 @@ export default function pairCoding(pi: ExtensionAPI) {
           return;
 
         default:
-          ctx.ui.notify(
-            `Unknown: /pair ${sub}. Try on, off, quiet, normal, chatty, look, notes, mute, drive, navigate, status.`,
-            "warning",
-          );
+          ctx.ui.notify(`Unknown: /pair ${sub}. Try ${SUBCOMMANDS.join(", ")}.`, "warning");
       }
     },
   });
@@ -251,7 +301,8 @@ export default function pairCoding(pi: ExtensionAPI) {
         ctx.ui.notify("Pair mode is off. Start it with /pair on.", "warning");
         return;
       }
-      await controller.lookNow(ctx);
+      const decision = await controller.lookNow(ctx);
+      if (!decision.observe) ctx.ui.notify(`Not looking right now — ${decision.reason}.`, "warning");
     },
   });
 }

@@ -4,6 +4,7 @@ import type { PairNote } from "./types.js";
 
 export interface ToolHooks {
   onInterject: (kind: InterjectKind, message: string, ctx: ExtensionContext) => void;
+  /** `reason` is the model's own one-liner; it surfaces in the widget. */
   onStayQuiet: (reason: string | undefined, ctx: ExtensionContext) => void;
   onNote: (note: PairNote, ctx: ExtensionContext) => void;
 }

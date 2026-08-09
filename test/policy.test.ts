@@ -59,11 +59,22 @@ test("a failed command overrides the gap", () => {
   assert.equal(shouldObserve(observation("failed-command", 0), state, config, NOW + 1000).observe, true);
 });
 
-test("muting silences even urgent triggers", () => {
+test("muting silences everything the driver did not ask for", () => {
   const config = makeConfig("chatty");
   const state = initialState(NOW);
   state.muted = true;
-  assert.equal(shouldObserve(observation("manual", 100), state, config, NOW).observe, false);
+  assert.equal(shouldObserve(observation("edit-burst", 100), state, config, NOW).observe, false);
+  assert.equal(shouldObserve(observation("failed-command", 0), state, config, NOW).observe, false);
+  assert.equal(shouldObserve(observation("idle-nudge", 0), state, config, NOW + 60 * 60_000).observe, false);
+});
+
+test("muting does not block a direct request", () => {
+  // Mute means "stop volunteering", not "ignore me" — /pair look is the driver
+  // asking, and swallowing it silently looks like a broken shortcut.
+  const config = makeConfig("chatty");
+  const state = initialState(NOW);
+  state.muted = true;
+  assert.equal(shouldObserve(observation("manual", 100), state, config, NOW).observe, true);
 });
 
 test("the hourly budget caps observations, including urgent ones", () => {

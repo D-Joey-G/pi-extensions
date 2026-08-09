@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isReadOnlyCommand, splitSegments } from "../src/roles.js";
+import { isAllowedTool, isReadOnlyCommand, splitSegments } from "../src/roles.js";
 
 test("inspection commands run without asking", () => {
   for (const command of [
@@ -43,4 +43,19 @@ test("redirections and substitutions are treated as writes", () => {
 
 test("segments split on every shell operator", () => {
   assert.deepEqual(splitSegments("ls && cat a || echo b; pwd"), ["ls", "cat a", "echo b", "pwd"]);
+});
+
+test("the tool gate is an allowlist, so an unknown tool is refused", () => {
+  for (const tool of ["read", "grep", "ls", "find", "bash", "interject", "stay_quiet", "pair_note"]) {
+    assert.equal(isAllowedTool(tool, []), true, tool);
+  }
+  // Known writers, and — the point of the allowlist — tools nobody named.
+  for (const tool of ["write", "edit", "apply_patch", "mcp__github__create_pr", "some_future_tool"]) {
+    assert.equal(isAllowedTool(tool, []), false, tool);
+  }
+});
+
+test("the driver can name extra read-only tools", () => {
+  assert.equal(isAllowedTool("mcp__sentry__get_issue", ["mcp__sentry__get_issue"]), true);
+  assert.equal(isAllowedTool("mcp__sentry__resolve", ["mcp__sentry__get_issue"]), false);
 });

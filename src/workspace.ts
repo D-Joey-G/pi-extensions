@@ -73,14 +73,7 @@ export class WorkspaceSnapshot {
     await this.commit(absPaths);
   }
 
-  has(path: string): boolean {
-    return this.contents.has(path);
-  }
-
-  get size(): number {
-    return this.contents.size;
-  }
-
+  /** Resolves a snapshot-relative path back to disk, for `commit` after a diff. */
   toAbsolute(path: string): string {
     return resolve(this.root, path);
   }
