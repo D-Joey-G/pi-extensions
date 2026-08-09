@@ -156,6 +156,6 @@ until you set it again.
 ```sh
 npm install
 npm run check   # tsc
-npm run lint    # biome
+npm run lint    # oxlint + oxfmt
 npm test        # node:test
 ```
