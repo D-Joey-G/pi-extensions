@@ -239,9 +239,9 @@ export class PairController {
     this.updateUi(ctx);
   }
 
-  /** Records a look that ended in silence, so the widget can show the last verdict. */
-  noteQuiet(reason: string | undefined, ctx: ExtensionContext): void {
-    this.lastDecision = reason ? `last look: ${reason}` : "";
+  /** Records a silent look; its compact tool row is the only visible verdict. */
+  noteQuiet(_reason: string | undefined, ctx: ExtensionContext): void {
+    this.lastDecision = "";
     this.updateUi(ctx);
   }
 
@@ -390,9 +390,11 @@ export class PairController {
     const now = Date.now();
     const decision = this.busyReason(trigger, ctx) ?? shouldObserve(merged, this.state, this.config, now);
     if (!decision.observe) {
-      // Held, not dropped: the next burst merges into this one.
-      this.pending = merged;
-      this.lastDecision = decision.reason;
+      // Real edits and failures are held for the next look. Empty idle checks
+      // are simply retried by the timer; presenting them as +0/-0 pending work
+      // makes the widget look broken.
+      this.pending = merged.files.length > 0 || merged.command ? merged : undefined;
+      this.lastDecision = this.pending ? decision.reason : "";
       this.updateUi(ctx);
       return decision;
     }
@@ -459,19 +461,20 @@ export class PairController {
     ].filter(Boolean);
     ctx.ui.setStatus("pair", `pair: ${bits.join(" · ")}`);
 
-    const lines = [
-      `pair ─ ${this.role === "navigator" ? "you drive, I watch" : "I have the keyboard"} (${this.config.cadence})`,
-    ];
+    // The footer owns steady-state role/cadence. Keep the larger widget for
+    // actionable or exceptional state so the same information is not repeated
+    // in three places.
+    const lines: string[] = [];
     if (this.pending) {
-      const { addedLines, removedLines, files } = this.pending;
-      lines.push(
-        `  holding +${addedLines}/-${removedLines} in ${files.length} file(s)${this.lastDecision ? ` — ${this.lastDecision}` : ""}`,
-      );
-    } else if (this.lastDecision) {
-      lines.push(`  ${this.lastDecision}`);
+      const { addedLines, removedLines, files, command } = this.pending;
+      const scope = command
+        ? files.length > 0
+          ? `failed command · +${addedLines}/-${removedLines} · ${files.length} file(s)`
+          : "failed command"
+        : `holding +${addedLines}/-${removedLines} · ${files.length} file(s)`;
+      lines.push(`pair · ${scope}${this.lastDecision ? ` · ${this.lastDecision}` : ""}`);
     }
-    if (this.notes.length > 0) lines.push(`  ${this.notes.length} note(s) — /pair notes`);
-    if (this.seedTruncated) lines.push("  repo too large to baseline fully — some first edits may look like new files");
-    ctx.ui.setWidget("pair", lines);
+    if (this.seedTruncated) lines.push("pair · baseline truncated · some first edits may appear new");
+    ctx.ui.setWidget("pair", lines.length > 0 ? lines : undefined);
   }
 }
