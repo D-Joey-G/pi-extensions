@@ -18,8 +18,6 @@ export interface PairConfig {
   maxFileBytes: number;
   /** Hard cap on files described in a single observation. */
   maxFilesPerObservation: number;
-  /** Block every bash call outright instead of screening for read-only commands. */
-  strictBash: boolean;
   /** Extra ignore globs on top of .gitignore and the built-in list. */
   ignore: string[];
   /**
@@ -78,7 +76,6 @@ export function makeConfig(cadence: Cadence = "normal", overrides: Partial<PairC
     maxPatchLines: 200,
     maxFileBytes: 2 * 1024 * 1024,
     maxFilesPerObservation: 12,
-    strictBash: false,
     ignore: [],
     extraReadOnlyTools: [],
     ...overrides,
@@ -106,11 +103,9 @@ const NUMERIC_KEYS = [
   "maxFilesPerObservation",
 ] as const satisfies ReadonlyArray<keyof PairConfig>;
 
-const BOOLEAN_KEYS = ["strictBash"] as const satisfies ReadonlyArray<keyof PairConfig>;
-
 const LIST_KEYS = ["ignore", "extraReadOnlyTools"] as const satisfies ReadonlyArray<keyof PairConfig>;
 
-export const OVERRIDABLE_KEYS: readonly string[] = [...NUMERIC_KEYS, ...BOOLEAN_KEYS, ...LIST_KEYS];
+export const OVERRIDABLE_KEYS: readonly string[] = [...NUMERIC_KEYS, ...LIST_KEYS];
 
 export type ParsedOverride = { ok: true; override: Partial<PairConfig> } | { ok: false; error: string };
 
@@ -130,11 +125,6 @@ export function parseOverride(key: string, raw: string): ParsedOverride {
     // budget or patch cap would silently switch the navigator off.
     if (parsed === 0 && key !== "idleNudgeMs") return { ok: false, error: `${key} must be greater than 0.` };
     return { ok: true, override: { [key]: parsed } };
-  }
-
-  if ((BOOLEAN_KEYS as readonly string[]).includes(key)) {
-    if (value !== "true" && value !== "false") return { ok: false, error: `${key} must be true or false.` };
-    return { ok: true, override: { [key]: value === "true" } };
   }
 
   const items = value

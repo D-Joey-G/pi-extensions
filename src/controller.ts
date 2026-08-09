@@ -32,6 +32,7 @@ interface PersistedState {
   muted: boolean;
   overrides: Partial<PairConfig>;
   baselineTools: string[];
+  returnAfterSettled?: boolean;
 }
 
 export interface ControllerHooks {
@@ -48,6 +49,8 @@ export class PairController {
   private config: PairConfig = makeConfig();
   private state: PolicyState = initialState(Date.now());
   private role: Role = "navigator";
+  /** Agent-approved handoffs return the keyboard after the scoped agent run settles. */
+  private returnAfterSettled = false;
   private active = false;
   private watcher: EditWatcher | undefined;
   private snapshot: WorkspaceSnapshot | undefined;
@@ -118,6 +121,7 @@ export class PairController {
     this.config = makeConfig(cadence, this.overrides);
     this.state = initialState(Date.now());
     this.role = "navigator";
+    this.returnAfterSettled = false;
     this.active = true;
     this.baselineTools = withoutPairTools(this.pi.getActiveTools());
 
@@ -218,11 +222,12 @@ export class PairController {
     this.updateUi(ctx);
   }
 
-  setRole(role: Role, ctx: ExtensionContext): void {
+  setRole(role: Role, ctx: ExtensionContext, options: { returnAfterSettled?: boolean } = {}): void {
     // Anything held from before the handoff describes a tree the agent is about
     // to rewrite, so the patches would be stale by the time they were shown.
     if (role === "driver") this.pending = undefined;
     this.role = role;
+    this.returnAfterSettled = role === "driver" && options.returnAfterSettled === true;
     applyRole(this.pi, role, this.baselineTools ?? [], this.config.extraReadOnlyTools);
     this.persist();
     this.updateUi(ctx);
@@ -245,11 +250,15 @@ export class PairController {
     this.updateUi(ctx);
   }
 
-  /** Frees the in-flight flag once the navigator's turn has fully finished. */
-  noteAgentSettled(ctx: ExtensionContext): void {
-    if (this.observingSince === undefined) return;
-    this.observingSince = undefined;
-    this.updateUi(ctx);
+  /** Frees the in-flight flag and completes any agent-approved keyboard handoff. */
+  noteAgentSettled(ctx: ExtensionContext): boolean {
+    const shouldReturn = this.role === "driver" && this.returnAfterSettled;
+    if (shouldReturn) this.setRole("navigator", ctx);
+    if (this.observingSince !== undefined) {
+      this.observingSince = undefined;
+      this.updateUi(ctx);
+    }
+    return shouldReturn;
   }
 
   /**
@@ -300,7 +309,10 @@ export class PairController {
     }
     if (!persisted) return;
 
-    this.role = persisted.role;
+    // An automatic handoff belongs to the agent run that requested it. If that
+    // run did not settle before shutdown, do not restore a stale permission.
+    this.role = persisted.returnAfterSettled ? "navigator" : persisted.role;
+    this.returnAfterSettled = false;
     this.overrides = persisted.overrides ?? {};
     this.config = makeConfig(persisted.cadence, this.overrides);
     this.state = initialState(Date.now());
@@ -321,6 +333,7 @@ export class PairController {
       muted: this.state.muted,
       overrides: this.overrides,
       baselineTools: this.baselineTools ?? [],
+      returnAfterSettled: this.returnAfterSettled,
     });
   }
 

@@ -84,7 +84,14 @@ test("navigator mode keeps only allowlisted tools, and /pair off puts them back"
   const controller = makeController(api, ctx);
 
   await controller.start(ctx, "normal");
-  assert.deepEqual(api.activeTools.toSorted(), ["bash", "grep", "interject", "pair_note", "read", "stay_quiet"]);
+  assert.deepEqual(api.activeTools.toSorted(), [
+    "grep",
+    "interject",
+    "pair_note",
+    "read",
+    "request_drive",
+    "stay_quiet",
+  ]);
   // An unrecognised tool is refused rather than trusted, even though nothing
   // named it as a writer.
   assert.equal(api.activeTools.includes("some_mcp_tool"), false);
@@ -122,14 +129,29 @@ test("cadence changes keep the driver's own settings", async () => {
   const controller = makeController(api, ctx);
 
   await controller.start(ctx, "normal");
-  controller.setOverrides({ maxPatchLines: 40, strictBash: true }, ctx);
+  controller.setOverrides({ maxPatchLines: 40 }, ctx);
   controller.setCadence("quiet", ctx);
 
   assert.equal(controller.currentConfig.cadence, "quiet");
   assert.equal(controller.currentConfig.maxPatchLines, 40);
-  assert.equal(controller.currentConfig.strictBash, true);
   // The preset itself still applies.
   assert.equal(controller.currentConfig.minChangedLines, 25);
+});
+
+test("an approved scoped handoff restores navigator tools when the agent settles", async () => {
+  const api = fakePi();
+  const ctx = fakeCtx(root);
+  const controller = makeController(api, ctx);
+
+  await controller.start(ctx, "normal");
+  controller.setRole("driver", ctx, { returnAfterSettled: true });
+  assert.equal(controller.currentRole, "driver");
+  assert.equal(api.activeTools.includes("edit"), true);
+
+  assert.equal(controller.noteAgentSettled(ctx), true);
+  assert.equal(controller.currentRole, "navigator");
+  assert.equal(api.activeTools.includes("edit"), false);
+  assert.equal(api.activeTools.includes("request_drive"), true);
 });
 
 test("a held-back file is not shown twice", async () => {
@@ -267,6 +289,22 @@ test("a session that was pairing comes back pairing", async () => {
   assert.equal(second.currentConfig.minChangedLines, 42);
   assert.equal(second.isMuted, true);
   assert.equal(second.sessionNotes.length, 1);
+});
+
+test("an interrupted automatic handoff is not restored as standing permission", async () => {
+  const api = fakePi();
+  const ctx = fakeCtx(root);
+  const first = makeController(api, ctx);
+
+  await first.start(ctx, "normal");
+  first.setRole("driver", ctx, { returnAfterSettled: true });
+
+  const replayed = fakeCtx(root, api.entries);
+  const second = makeController(api, replayed);
+  await second.restore(replayed);
+
+  assert.equal(second.currentRole, "navigator");
+  assert.equal(api.activeTools.includes("edit"), false);
 });
 
 test("session cleanup preserves active state for reload and resume", async () => {

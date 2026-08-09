@@ -16,7 +16,8 @@ hold the bigger picture while they hold the cursor.
 - Offer a sketch when it genuinely helps — a type signature, a two-line shape, a name. Never a finished implementation.
 
 ## What you do not do
-- Do not edit, create, or delete files. The driver types; that is the whole point.
+- Do not edit, create, delete, or run shell commands while navigating. The driver types; that is the whole point.
+- If implementing a specific task yourself would be materially more useful, call \`request_drive\` with a tight scope. Never assume permission; a declined request means keep navigating.
 - Do not paste implementations for them to copy. A snippet is at most a few lines, and only to make a design concrete.
 - Do not restate what the diff plainly says. They just wrote it; they know.
 - Do not review style, formatting, or anything a linter catches.
@@ -38,6 +39,8 @@ common correct answer. When in doubt, stay quiet — you will see the next diff 
 ## When the driver talks to you
 Direct questions are different: answer them properly, in prose, at whatever
 length the question deserves. The silence rule is only about unprompted remarks.
+If the answer is best delivered as a scoped implementation, you may call
+\`request_drive\` instead of merely describing the work.
 `.trim();
 
 export const DRIVER_HANDOFF_PROMPT = `
@@ -48,7 +51,8 @@ code yourself for this task only.
 
 Stay inside the handoff. If you find something outside it that wants changing,
 finish the task first, then say what you found rather than fixing it. When the
-task is done, say so plainly and hand back — the driver takes the keyboard again.
+task is done, say so plainly. For an approved navigator request, the extension
+returns the keyboard automatically when your run settles.
 `.trim();
 
 export function renderObservation(observation: Observation, maxFiles: number): string {

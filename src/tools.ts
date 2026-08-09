@@ -9,6 +9,10 @@ export interface ToolHooks {
   /** `reason` is the model's own one-liner; it is visible when the tool row is expanded. */
   onStayQuiet: (reason: string | undefined, ctx: ExtensionContext) => void;
   onNote: (note: PairNote, ctx: ExtensionContext) => void;
+  onRequestDrive: (
+    request: { task: string; files: string[] },
+    ctx: ExtensionContext,
+  ) => Promise<{ approved: boolean; reason: string }>;
 }
 
 export type InterjectKind = "question" | "suggestion" | "concern" | "observation";
@@ -97,6 +101,42 @@ export function registerPairTools(pi: ExtensionAPI, hooks: ToolHooks): void {
     },
     renderResult(result, _options, theme, context) {
       return renderEmptyResult(result, theme, context.isError);
+    },
+  });
+
+  pi.registerTool({
+    name: "request_drive",
+    label: "Request keyboard",
+    description:
+      "Ask the human to hand you the keyboard for one scoped implementation task. " +
+      "Use this only when doing the edit yourself is materially more useful than explaining it. The human must approve.",
+    promptSnippet: "request_drive — ask permission to take the keyboard for one scoped task.",
+    renderShell: "self",
+    parameters: Type.Object({
+      task: Type.String({ description: "A concise description of the implementation you want permission to perform." }),
+      files: Type.Optional(
+        Type.Array(Type.String(), { description: "Files you expect to change, if known.", maxItems: 12 }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!hooks.isActive()) throw new Error("Pair mode is off. Start it with /pair on.");
+      const decision = await hooks.onRequestDrive({ task: params.task, files: params.files ?? [] }, ctx);
+      return {
+        content: [{ type: "text" as const, text: decision.reason }],
+        details: { approved: decision.approved, files: params.files ?? [] },
+        // Approval queues a fresh driver turn with the correct role prompt.
+        terminate: decision.approved,
+      };
+    },
+    renderCall(args, theme, context) {
+      let text = `${theme.fg("accent", "⇄")} ${theme.fg("toolTitle", "keyboard request")} · ${args.task}`;
+      if (context.expanded && args.files?.length) text += `\n  ${theme.fg("muted", args.files.join(", "))}`;
+      return new Text(text, 0, 0);
+    },
+    renderResult(result, _options, theme, context) {
+      if (context.isError) return renderEmptyResult(result, theme, true);
+      const approved = (result.details as { approved?: boolean } | undefined)?.approved;
+      return new Text(theme.fg(approved ? "success" : "muted", approved ? "  approved" : "  not approved"), 0, 0);
     },
   });
 

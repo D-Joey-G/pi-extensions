@@ -7,7 +7,7 @@ import {
 import { isCadence, OVERRIDABLE_KEYS, parseOverride, renderConfig } from "./config.js";
 import { PairController } from "./controller.js";
 import { renderNotes } from "./prompts.js";
-import { disablePairTools, isAllowedTool, isReadOnlyCommand } from "./roles.js";
+import { disablePairTools, isAllowedTool } from "./roles.js";
 import { registerPairTools } from "./tools.js";
 import type { Cadence } from "./types.js";
 
@@ -55,6 +55,27 @@ export default function pairCoding(pi: ExtensionAPI) {
     onInterject: (_kind, _message, ctx) => controller.noteInterjection(remember(ctx)),
     onStayQuiet: (reason, ctx) => controller.noteQuiet(reason, remember(ctx)),
     onNote: (note, ctx) => controller.addNote(note, remember(ctx)),
+    onRequestDrive: async ({ task, files }, ctx) => {
+      remember(ctx);
+      if (controller.currentRole !== "navigator") {
+        return { approved: false, reason: "You already have the keyboard." };
+      }
+      if (controller.isMuted) {
+        return { approved: false, reason: "The navigator is muted, so keyboard requests are refused." };
+      }
+      if (!ctx.hasUI) {
+        return { approved: false, reason: "No interactive UI is available to approve the keyboard request." };
+      }
+
+      const scope =
+        files.length > 0 ? `${task}\n\nExpected files:\n${files.map((file) => `• ${file}`).join("\n")}` : task;
+      const approved = await ctx.ui.confirm("Navigator requests the keyboard", scope);
+      if (!approved) return { approved: false, reason: "The driver declined the keyboard request." };
+
+      controller.setRole("driver", ctx, { returnAfterSettled: true });
+      pi.sendUserMessage(`Keyboard granted for this scoped task: ${task}`, { deliverAs: "followUp" });
+      return { approved: true, reason: `Keyboard granted for this scoped task: ${task}` };
+    },
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -77,7 +98,9 @@ export default function pairCoding(pi: ExtensionAPI) {
   // The navigator's turn is over, so the next burst may be shown.
   pi.on("agent_settled", (_event, ctx) => {
     remember(ctx);
-    controller.noteAgentSettled(ctx);
+    if (controller.noteAgentSettled(ctx) && ctx.hasUI) {
+      ctx.ui.notify("Scoped task settled. Keyboard returned to you.", "info");
+    }
   });
 
   // Give the navigator its role instructions on every turn, and keep the
@@ -99,30 +122,10 @@ export default function pairCoding(pi: ExtensionAPI) {
       return {
         block: true,
         reason:
-          `You are the navigator — the driver edits the files, and \`${event.toolName}\` is not on the read-only list. ` +
-          "Say what you would change and why, or use /pair drive to ask for the keyboard. " +
+          `You are the navigator — \`${event.toolName}\` is not on the read-only list. ` +
+          "Explain what you would change, or call request_drive to ask for the keyboard. " +
           `If this tool only reads, the driver can allow it with: /pair set extraReadOnlyTools ${event.toolName}`,
       };
-    }
-
-    if (event.toolName === "bash") {
-      if (config.strictBash) {
-        return { block: true, reason: "strictBash is on: the navigator may not run shell commands at all." };
-      }
-      const command = String((event.input as { command?: unknown } | undefined)?.command ?? "");
-      if (isReadOnlyCommand(command)) return;
-      // Without a UI there is nobody to ask, and while muted the driver has
-      // asked not to be spoken to — a confirm dialog is speaking to them.
-      if (!ctx.hasUI || controller.isMuted) {
-        return {
-          block: true,
-          reason: controller.isMuted
-            ? "Navigator is muted, so commands needing the driver's confirmation are refused. Read-only commands still work."
-            : "Navigator mode allows read-only shell commands only.",
-        };
-      }
-      const ok = await ctx.ui.confirm("Navigator wants to run a command", command);
-      if (!ok) return { block: true, reason: "Driver declined the command." };
     }
   });
 

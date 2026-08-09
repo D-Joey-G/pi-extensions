@@ -94,8 +94,11 @@ a better lever than any amount of "be concise" in the system prompt.
 
 Real pairs swap. `/pair drive <task>` gives the agent the keyboard for one scoped
 task and switches it to `DRIVER_HANDOFF_PROMPT`; `/pair navigate` takes it back.
-The tool baseline captured at `/pair on` is restored exactly, so swapping does not
-quietly change the driver's own tool configuration.
+The navigator can also call `request_drive` with a task and expected files. If the
+driver approves the dialog, a fresh follow-up turn starts with the driver prompt
+and the keyboard returns automatically when that run settles. The tool baseline
+captured at `/pair on` is restored exactly, so swapping does not quietly change
+the driver's own tool configuration.
 
 While the agent is driving, the watcher stops feeding it observations — otherwise
 it would be reacting to its own diffs, which is a feedback loop rather than a
@@ -123,16 +126,11 @@ alongside a `create_pr` one, because nothing in the name distinguishes them.
 `extraReadOnlyTools` is the escape hatch, and the block message names it so the
 navigator can tell the driver what to run rather than just failing.
 
-`bash` is the interesting case. Blocking it outright makes the navigator useless —
-it can't run `git log`, can't check whether the tests pass. So commands are
-screened against a read-only allowlist (`src/roles.ts`); anything that doesn't
-match prompts the driver to confirm rather than being silently rejected.
-
-**This screening is a heuristic, not a sandbox.** It splits on shell operators so
-`cat x && rm -rf y` is judged on both halves, and treats any redirection or
-command substitution as a write. It will still be defeated by sufficiently
-creative shell. `strictBash` refuses `bash` entirely, which is the version with
-an actual guarantee behind it.
+`bash` is excluded outright. That means the navigator cannot inspect Git history
+or run tests through an arbitrary shell, but it removes a command-classification
+heuristic that could never provide the same guarantee as the tool allowlist. If
+shell work is materially useful, the navigator requests a scoped keyboard handoff.
+Narrow read-only tools can be added explicitly through `extraReadOnlyTools`.
 
 ## Mute is not silence
 
@@ -140,10 +138,9 @@ an actual guarantee behind it.
 idle nudges, and the failed-command lean-in. It deliberately does not suppress
 `/pair look`, because that is the driver asking a question, and a mode where
 pressing the key does nothing at all reads as a broken shortcut rather than a
-respected preference. The same reasoning runs the other way for bash: while muted
-the navigator can still run allowlisted commands, but anything that would need a
-confirmation dialog is refused instead, since a dialog is a way of talking to
-someone who asked not to be talked to.
+respected preference. A `request_drive` call is refused while muted because its
+confirmation dialog would be a way of talking to someone who asked not to be
+talked to.
 
 ## Surviving a restart
 

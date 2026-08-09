@@ -1,74 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isAllowedTool, isReadOnlyCommand, splitSegments } from "../src/roles.js";
+import { isAllowedTool } from "../src/roles.js";
 
-test("inspection commands run without asking", () => {
-  for (const command of [
-    "git log --oneline -20",
-    "git diff HEAD~1",
-    "rg 'useEffect' src",
-    "ls -la src",
-    "npm test",
-    "npx tsc --noEmit",
-    "cat package.json | jq .scripts",
-  ]) {
-    assert.equal(isReadOnlyCommand(command), true, command);
-  }
-});
-
-test("anything that can mutate the tree needs the driver's nod", () => {
-  for (const command of [
-    "rm -rf dist",
-    "git commit -am wip",
-    "git checkout main",
-    "npm install lodash",
-    "sed -i '' 's/a/b/' src/a.ts",
-    "mkdir -p src/new",
-  ]) {
-    assert.equal(isReadOnlyCommand(command), false, command);
-  }
-});
-
-test("a read-only prefix does not launder the rest of a compound command", () => {
-  assert.equal(isReadOnlyCommand("cat a.ts && rm -rf src"), false);
-  assert.equal(isReadOnlyCommand("ls; git push"), false);
-  assert.equal(isReadOnlyCommand("git log | head -5"), true);
-});
-
-test("redirections and substitutions are treated as writes", () => {
-  assert.equal(isReadOnlyCommand("cat a.ts > b.ts"), false);
-  assert.equal(isReadOnlyCommand("echo hi >> notes.md"), false);
-  assert.equal(isReadOnlyCommand("echo hi>notes.md"), false);
-  assert.equal(isReadOnlyCommand("npm test 2>errors.log"), false);
-  assert.equal(isReadOnlyCommand("echo $(rm -rf /tmp/x)"), false);
-});
-
-test("write-capable flags and arbitrary npm scripts need confirmation", () => {
-  for (const command of [
-    "npm run build",
-    "find . -delete",
-    "find . -exec rm {} ;",
-    "git branch -D old",
-    "git branch new-feature",
-    "git diff --output=changes.patch",
-  ]) {
-    assert.equal(isReadOnlyCommand(command), false, command);
-  }
-  for (const command of ["npm run", "find src -type f", "git branch", "git branch --show-current"]) {
-    assert.equal(isReadOnlyCommand(command), true, command);
-  }
-});
-
-test("segments split on every shell operator", () => {
-  assert.deepEqual(splitSegments("ls && cat a || echo b; pwd"), ["ls", "cat a", "echo b", "pwd"]);
-});
-
-test("the tool gate is an allowlist, so an unknown tool is refused", () => {
-  for (const tool of ["read", "grep", "ls", "find", "bash", "interject", "stay_quiet", "pair_note"]) {
+test("the navigator gets only file inspection and pair tools", () => {
+  for (const tool of ["read", "grep", "ls", "find", "interject", "stay_quiet", "pair_note", "request_drive"]) {
     assert.equal(isAllowedTool(tool, []), true, tool);
   }
-  // Known writers, and — the point of the allowlist — tools nobody named.
-  for (const tool of ["write", "edit", "apply_patch", "mcp__github__create_pr", "some_future_tool"]) {
+
+  // Shells, known writers, and unknown tools all fail closed.
+  for (const tool of ["bash", "write", "edit", "apply_patch", "mcp__github__create_pr", "some_future_tool"]) {
     assert.equal(isAllowedTool(tool, []), false, tool);
   }
 });

@@ -20,12 +20,6 @@ test("zero is only meaningful for the idle nudge", () => {
   assert.equal(parseOverride("maxPatchLines", "0").ok, false);
 });
 
-test("booleans take only true or false", () => {
-  assert.deepEqual(parseOverride("strictBash", "true"), { ok: true, override: { strictBash: true } });
-  assert.deepEqual(parseOverride("strictBash", "false"), { ok: true, override: { strictBash: false } });
-  assert.equal(parseOverride("strictBash", "yes").ok, false);
-});
-
 test("list settings split on commas and drop blanks", () => {
   const parsed = parseOverride("ignore", "**/vendor/**, **/*.snap ,");
   assert.deepEqual(parsed.ok && parsed.override, { ignore: ["**/vendor/**", "**/*.snap"] });
@@ -48,7 +42,6 @@ test("every overridable key round-trips into the config", () => {
 test("the rendered config shows every knob", () => {
   const rendered = renderConfig(makeConfig("quiet", { ignore: ["**/vendor/**"] }));
   assert.match(rendered, /cadence {2}quiet/);
-  assert.match(rendered, /strictBash\s+false/);
   assert.match(rendered, /ignore\s+\*\*\/vendor\/\*\*/);
   // Empty lists read as a dash rather than as nothing at all.
   assert.match(rendered, /extraReadOnlyTools\s+—/);

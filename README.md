@@ -4,7 +4,7 @@ A pair-programming mode for [pi](https://github.com/earendil-works/pi). You keep
 the keyboard. The agent navigates: it watches your diffs land, asks the question
 you were avoiding, and flags the design problem before it becomes a rewrite.
 
-It cannot edit your files. That's the point.
+It cannot edit your files while navigating. It can ask you to approve a scoped keyboard handoff.
 
 ```
 /pair on
@@ -89,15 +89,21 @@ forking pi, is in [DESIGN.md](DESIGN.md).
 
 ## What it can and can't do
 
-**Can:** `read`, `grep`, `ls`, `find`, and read-only shell commands (`git log`,
-`git diff`, `rg`, `npm test`, …) without asking.
+**Can:** inspect the workspace with `read`, `grep`, `ls`, and `find`.
 
-**Can't:** everything else. The tool gate is an allowlist, not a list of known
+**Can't:** use `bash`, edit files, or call unknown tools while navigating. The
+tool gate is an allowlist, not a list of known
 writers — a tool pi adds tomorrow, an MCP server you connect, or another
 extension's tool is refused because it isn't on the list, not permitted because
 nobody thought to ban it. Enforced twice, by trimming the active tool set and by
 blocking at the call site, so it holds even if something else in your session
 changes the tools.
+
+When a scoped implementation would be more useful than advice, the navigator can
+call `request_drive`. You see the proposed task and expected files in a confirmation
+dialog. Approval restores your original tool set for that agent run; once it
+settles, the extension automatically returns to navigator mode. Declining leaves
+the tool set unchanged. `/pair drive <task>` remains the explicit manual handoff.
 
 The cost is that read-only MCP tools are blocked too until you say otherwise:
 
@@ -105,15 +111,9 @@ The cost is that read-only MCP tools are blocked too until you say otherwise:
 /pair set extraReadOnlyTools mcp__sentry__get_issue,mcp__linear__get_issue
 ```
 
-`bash` is the exception that has to be judged rather than listed. Commands are
-screened against a read-only allowlist, and anything else asks you first. That
-screening is a heuristic, not a sandbox — it handles the obvious evasions
-(compound commands are judged segment by segment; redirections and command
-substitutions always count as writes) but it isn't airtight:
-
-```sh
-/pair set strictBash true   # refuse bash outright
-```
+Shell access is deliberately unavailable to the navigator. Rather than trying to
+classify arbitrary shell syntax as safe, the extension fails closed and requires
+a keyboard handoff.
 
 ## Configuration
 
@@ -130,7 +130,6 @@ Cadence covers most of it. `/pair config` shows the rest, and `/pair set <key>
 | `maxPatchLines` | Truncate each file's diff before sending. |
 | `maxFileBytes` | Represent larger files by size/type metadata instead of reading their contents. |
 | `maxFilesPerObservation` | Cap on files described in one observation. |
-| `strictBash` | `true` refuses bash outright. |
 | `ignore` | Extra ignore globs, comma-separated. |
 | `extraReadOnlyTools` | Extra tools the navigator may call, comma-separated. |
 
