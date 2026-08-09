@@ -107,6 +107,14 @@ const LIST_KEYS = ["ignore", "extraReadOnlyTools"] as const satisfies ReadonlyAr
 
 export const OVERRIDABLE_KEYS: readonly string[] = [...NUMERIC_KEYS, ...LIST_KEYS];
 
+/**
+ * Settings a zero is a real value for.
+ *
+ * Everywhere else zero would silently switch the navigator off — a zero budget
+ * or patch cap looks like a setting and behaves like an uninstall.
+ */
+const ZERO_MEANS_OFF: readonly string[] = ["idleNudgeMs"];
+
 export type ParsedOverride = { ok: true; override: Partial<PairConfig> } | { ok: false; error: string };
 
 /** Parses one `key value` pair from `/pair set`. Values are validated, not trusted. */
@@ -121,17 +129,48 @@ export function parseOverride(key: string, raw: string): ParsedOverride {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return { ok: false, error: `${key} must be a number ≥ 0.` };
     if (!Number.isInteger(parsed)) return { ok: false, error: `${key} must be a whole number.` };
-    // Only idleNudgeMs is meaningfully zero (it disables the nudge); a zero
-    // budget or patch cap would silently switch the navigator off.
-    if (parsed === 0 && key !== "idleNudgeMs") return { ok: false, error: `${key} must be greater than 0.` };
+    if (parsed === 0 && !ZERO_MEANS_OFF.includes(key)) return { ok: false, error: `${key} must be greater than 0.` };
     return { ok: true, override: { [key]: parsed } };
   }
 
-  const items = value
+  return { ok: true, override: { [key]: toStringList(value) } };
+}
+
+/** Splits a comma-separated `/pair set` value into its items. */
+function toStringList(value: string): string[] {
+  return value
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-  return { ok: true, override: { [key]: items } };
+}
+
+/** Keeps only the strings in an unknown value. Persisted lists are not trusted. */
+export function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/**
+ * Filters a persisted override bag down to values this version can use.
+ *
+ * A malformed override is dropped rather than repaired: without it the cadence
+ * preset applies, which is always sane, whereas a `minChangedLines` of `"lots"`
+ * would flow straight into the pacing arithmetic and compare as `false` against
+ * everything — which the caller reads as "go ahead".
+ */
+export function sanitizeOverrides(value: unknown): Partial<PairConfig> {
+  if (typeof value !== "object" || value === null) return {};
+  const raw = value as Record<string, unknown>;
+  const overrides: Partial<PairConfig> = {};
+  for (const key of NUMERIC_KEYS) {
+    const parsed = raw[key];
+    if (typeof parsed !== "number" || !Number.isInteger(parsed) || parsed < 0) continue;
+    if (parsed === 0 && !ZERO_MEANS_OFF.includes(key)) continue;
+    overrides[key] = parsed;
+  }
+  for (const key of LIST_KEYS) {
+    if (raw[key] !== undefined) overrides[key] = toStringArray(raw[key]);
+  }
+  return overrides;
 }
 
 /** Renders the current settings for `/pair config`. */

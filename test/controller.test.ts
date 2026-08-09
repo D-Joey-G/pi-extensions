@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { PairController } from "../src/controller.js";
+import { type ControllerHooks, PairController, type ControllerSeams } from "../src/controller.js";
+import { EditWatcher, type WatcherOptions } from "../src/watcher.js";
 
 let root: string;
 /** Started controllers hold a live watcher, which would keep node running. */
@@ -22,10 +23,25 @@ afterEach(async () => {
 });
 
 /** Builds a controller and guarantees its watcher is torn down after the test. */
-function makeController(api: ReturnType<typeof fakePi>, ctx: ExtensionContext): PairController {
-  const controller = new PairController(api.pi);
+function makeController(
+  api: ReturnType<typeof fakePi>,
+  ctx: ExtensionContext,
+  hooks: ControllerHooks = {},
+  seams: ControllerSeams = {},
+): PairController {
+  const controller = new PairController(api.pi, hooks, seams);
   started.push({ controller, ctx });
   return controller;
+}
+
+/** A watcher that can be made to die the way chokidar does after startup. */
+class ControllableWatcher extends EditWatcher {
+  async fail(message: string): Promise<void> {
+    // The real one tears itself down before reporting; a fake that does not
+    // would leave this test holding an open chokidar instance.
+    await this.stop();
+    this.options.onError?.(new Error(message));
+  }
 }
 
 interface SentMessage {
@@ -72,6 +88,31 @@ function fakeCtx(cwd: string, entries: unknown[] = []): ExtensionContext {
     isIdle: () => true,
     sessionManager: { getBranch: () => entries },
   } as unknown as ExtensionContext;
+}
+
+/** A ctx with a UI attached, so what the driver actually sees can be asserted. */
+function fakeUiCtx(cwd: string): { ctx: ExtensionContext; ui: { widget?: string[]; status?: string } } {
+  const ui: { widget?: string[]; status?: string } = {};
+  const ctx = {
+    cwd,
+    hasUI: true,
+    isIdle: () => true,
+    sessionManager: { getBranch: () => [] },
+    ui: {
+      setWidget: (_key: string, lines: string[] | undefined) => {
+        ui.widget = lines;
+      },
+      setStatus: (_key: string, text: string | undefined) => {
+        ui.status = text;
+      },
+    },
+  } as unknown as ExtensionContext;
+  return { ctx, ui };
+}
+
+/** Builds a custom transcript entry the way `appendEntry` records one. */
+function entry(customType: string, data: unknown) {
+  return { type: "custom", customType, data };
 }
 
 function lines(count: number): string {
@@ -373,6 +414,136 @@ test("a manual look drains pending watcher paths into one request", async () => 
   assert.equal(api.sent.length, 1);
   assert.equal(api.sent[0]!.kind, "user");
   assert.match(api.sent[0]!.content, /a\.ts/);
+});
+
+test("a dead watcher stops pairing rather than leaving a stale status", async () => {
+  const api = fakePi();
+  const { ctx, ui } = fakeUiCtx(root);
+  let watcher: ControllableWatcher | undefined;
+  let reported: Error | undefined;
+  let onReported = (): void => {};
+  // The hook fires only once teardown has finished, so everything asserted
+  // below is the state the driver would see alongside the message.
+  const reportedToDriver = new Promise<void>((resolve) => {
+    onReported = resolve;
+  });
+
+  const controller = makeController(
+    api,
+    ctx,
+    {
+      onWatcherError: (error) => {
+        reported = error;
+        onReported();
+      },
+    },
+    {
+      openWatcher: (options: WatcherOptions) => {
+        watcher = new ControllableWatcher(options);
+        return watcher;
+      },
+    },
+  );
+
+  await controller.start(ctx, "normal");
+  await watcher!.fail("too many open files");
+  await reportedToDriver;
+
+  assert.equal(reported?.message, "too many open files");
+  assert.equal(controller.isActive, false);
+  // The widget and footer must not still claim to be watching a tree nothing
+  // is watching, and the driver's own tools have to come back.
+  assert.equal(ui.status, undefined);
+  assert.equal(ui.widget, undefined);
+  assert.deepEqual(api.activeTools.toSorted(), ["bash", "edit", "grep", "read", "write"]);
+
+  const decision = await controller.lookNow(ctx);
+  assert.deepEqual(decision, { observe: false, reason: "pair mode is off" });
+});
+
+test("stopping drops held work and leaves nothing that can still speak", async () => {
+  const api = fakePi();
+  const { ctx, ui } = fakeUiCtx(root);
+  const controller = makeController(api, ctx);
+  const file = join(root, "a.ts");
+  await writeFile(file, "");
+  await controller.start(ctx, "normal");
+
+  // Too small to send: this is now held for the next look.
+  await writeFile(file, "const a = 1;\n");
+  await controller.observeEdits([file], ctx);
+  assert.match(ui.widget?.join("\n") ?? "", /holding/);
+
+  await controller.stop(ctx);
+  assert.equal(ui.widget, undefined);
+  assert.equal(ui.status, undefined);
+
+  // Whatever was held went with the runtime, and a burst that arrives after
+  // the fact cannot resurrect it.
+  await writeFile(file, lines(40));
+  const decision = await controller.observeEdits([file], ctx);
+  assert.deepEqual(decision, { observe: false, reason: "pair mode is off" });
+  assert.equal(api.sent.length, 0);
+});
+
+test("a turn that dies without settling unblocks after the backstop", async () => {
+  const api = fakePi();
+  const ctx = fakeCtx(root);
+  let clock = Date.parse("2026-01-01T00:00:00Z");
+  const controller = makeController(api, ctx, {}, { now: () => clock });
+  const file = join(root, "a.ts");
+  await writeFile(file, "");
+  await controller.start(ctx, "chatty");
+
+  await writeFile(file, lines(10));
+  await controller.observeEdits([file], ctx);
+  assert.equal(api.sent.length, 1);
+
+  // `agent_settled` never arrives, so the navigator stays marked as busy.
+  await writeFile(file, lines(30));
+  await controller.observeEdits([file], ctx);
+  assert.equal(api.sent.length, 1);
+
+  // Past the backstop, pairing resumes rather than staying stuck for the rest
+  // of the session.
+  clock += 6 * 60_000;
+  await controller.observeEdits([file], ctx);
+  assert.equal(api.sent.length, 2);
+});
+
+test("a corrupted session entry cannot arm a runaway navigator", async () => {
+  const api = fakePi();
+  // A transcript from another version: a cadence this one has never heard of,
+  // and an override that is not a number.
+  const ctx = fakeCtx(root, [
+    entry("pair/note", { kind: "nonsense", text: "dropped" }),
+    entry("pair/note", { kind: "risk", text: "kept", at: 1 }),
+    entry("pair/state", {
+      active: true,
+      cadence: "breezy",
+      role: "navigator",
+      overrides: { minChangedLines: "lots", maxObservationsPerHour: 0 },
+      baselineTools: ["read", 7, "grep"],
+    }),
+  ]);
+  const controller = makeController(api, ctx);
+  await controller.restore(ctx);
+
+  assert.equal(controller.isActive, true);
+  assert.equal(controller.currentCadence, "normal");
+  // Unusable settings fall back to the preset instead of reaching the pacing
+  // arithmetic, where every comparison against undefined reads as "go ahead".
+  assert.equal(controller.currentConfig.minChangedLines, 8);
+  assert.equal(controller.currentConfig.maxObservationsPerHour, 30);
+  assert.deepEqual(
+    controller.sessionNotes.map((note) => note.text),
+    ["kept"],
+  );
+
+  const file = join(root, "a.ts");
+  await writeFile(file, "const a = 1;\n");
+  await controller.observeEdits([file], ctx);
+  assert.equal(api.sent.length, 0, "a one-line edit must still be held back");
 });
 
 test("a session that was not pairing comes back with its notes only", async () => {

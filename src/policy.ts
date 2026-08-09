@@ -1,5 +1,5 @@
 import type { PairConfig } from "./config.js";
-import type { Observation, PolicyState } from "./types.js";
+import type { Observation, ObservedFile, PolicyState } from "./types.js";
 
 const HOUR_MS = 60 * 60_000;
 
@@ -79,6 +79,14 @@ export function recordInterjection(state: PolicyState, now: number): PolicyState
   return state;
 }
 
+/** Line totals for a set of files, which every observation carries pre-summed. */
+export function countChanges(files: readonly ObservedFile[]): Pick<Observation, "addedLines" | "removedLines"> {
+  return {
+    addedLines: files.reduce((sum, file) => sum + file.addedLines, 0),
+    removedLines: files.reduce((sum, file) => sum + file.removedLines, 0),
+  };
+}
+
 /** Merges a burst that was too small to act on into the next one. */
 export function mergeObservations(pending: Observation, next: Observation): Observation {
   const byPath = new Map(pending.files.map((file) => [file.path, file]));
@@ -88,8 +96,7 @@ export function mergeObservations(pending: Observation, next: Observation): Obse
     trigger: next.trigger,
     at: next.at,
     files,
-    addedLines: files.reduce((sum, file) => sum + file.addedLines, 0),
-    removedLines: files.reduce((sum, file) => sum + file.removedLines, 0),
+    ...countChanges(files),
     command: next.command ?? pending.command,
   };
 }

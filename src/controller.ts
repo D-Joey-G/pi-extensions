@@ -1,80 +1,62 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { makeConfig, type PairConfig } from "./config.js";
-import {
-  type Decision,
-  initialState,
-  mergeObservations,
-  recordInterjection,
-  recordObservation,
-  shouldObserve,
-} from "./policy.js";
-import { DRIVER_HANDOFF_PROMPT, NAVIGATOR_PROMPT, notesContext, renderObservation } from "./prompts.js";
+import { NOTE_ENTRY, parseNote, parsePersistedState, type PersistedState, STATE_ENTRY } from "./persistence.js";
+import type { Decision } from "./policy.js";
+import { DRIVER_HANDOFF_PROMPT, NAVIGATOR_PROMPT, notesContext } from "./prompts.js";
 import { applyRole, withoutPairTools } from "./roles.js";
-import type { Cadence, Observation, PairNote, PolicyState, Role, Trigger } from "./types.js";
-import { EditWatcher } from "./watcher.js";
-import { WorkspaceSnapshot } from "./workspace.js";
-
-export const NOTE_ENTRY = "pair/note";
-export const STATE_ENTRY = "pair/state";
-export const OBSERVATION_MESSAGE = "pair/observation";
-
-/**
- * Backstop for the in-flight flag. `agent_settled` clears it in practice; this
- * only matters if a turn dies without the event, where the cost of staying
- * stuck is that pairing silently stops for the rest of the session.
- */
-const OBSERVATION_TIMEOUT_MS = 5 * 60_000;
-
-interface PersistedState {
-  active: boolean;
-  cadence: Cadence;
-  role: Role;
-  muted: boolean;
-  overrides: Partial<PairConfig>;
-  baselineTools: string[];
-  returnAfterSettled?: boolean;
-}
+import { PAIR_OFF, PairSession, type SessionDeps } from "./session.js";
+import type { Cadence, PairNote, Role } from "./types.js";
+import type { OpenWatcher } from "./watcher.js";
 
 export interface ControllerHooks {
   /** Surfaces a watcher failure, which otherwise ends pairing silently. */
   onWatcherError?: (error: Error, ctx: ExtensionContext) => void;
+  /** Surfaces a look that failed on its own, which nothing else would report. */
+  onLookError?: (error: Error, ctx: ExtensionContext) => void;
+}
+
+/** Collaborators with a real implementation, substituted only by tests. */
+export interface ControllerSeams {
+  now?: () => number;
+  openWatcher?: OpenWatcher;
 }
 
 /**
  * Owns the pairing session: what the driver changed, whether it is worth a
  * remark, and which role each side is currently playing.
+ *
+ * The observation machinery lives in `PairSession`; what stays here is the part
+ * that outlives it — the role, the settings, the notes, and the transcript.
  */
 export class PairController {
   private overrides: Partial<PairConfig> = {};
   private config: PairConfig = makeConfig();
-  private state: PolicyState = initialState(Date.now());
   private role: Role = "navigator";
-  /** Agent-approved handoffs return the keyboard after the scoped agent run settles. */
+  /** Agent-approved handoffs return the keyboard after the scoped run settles. */
   private returnAfterSettled = false;
+  /**
+   * The driver's on/off choice, and the only half of "is pairing on" that is
+   * persisted.
+   *
+   * Kept apart from `session`, which is the runtime serving that choice:
+   * shutdown drops the runtime and leaves the choice alone, which is how a
+   * reload comes back pairing instead of quietly switched off.
+   */
   private active = false;
-  private watcher: EditWatcher | undefined;
-  private snapshot: WorkspaceSnapshot | undefined;
+  /** The live runtime, present exactly while pairing is running. */
+  private session: PairSession | undefined;
   /** Undefined until a session captures it; distinct from "captured as empty". */
   private baselineTools: string[] | undefined;
   private notes: PairNote[] = [];
-  private pending: Observation | undefined;
-  /**
-   * When the current observation was handed to the model, or undefined when the
-   * navigator is free. Cleared by `agent_settled` rather than at send time: the
-   * send returns immediately and the turn runs after it, so clearing eagerly
-   * would let a second burst interrupt a turn already in progress.
-   */
-  private observingSince: number | undefined;
-  private lastDecision = "";
-  /** True when the repo was too large to baseline fully at startup. */
-  private seedTruncated = false;
-  /** Serializes watcher, command-failure, idle, and manual observations. */
-  private burstQueue: Promise<void> = Promise.resolve();
+  private readonly now: () => number;
 
   constructor(
     private readonly pi: ExtensionAPI,
     private readonly hooks: ControllerHooks = {},
-  ) {}
+    private readonly seams: ControllerSeams = {},
+  ) {
+    this.now = seams.now ?? Date.now;
+  }
 
   get isActive(): boolean {
     return this.active;
@@ -93,20 +75,11 @@ export class PairController {
   }
 
   get isMuted(): boolean {
-    return this.state.muted;
+    return this.session?.muted ?? false;
   }
 
   get sessionNotes(): readonly PairNote[] {
     return this.notes;
-  }
-
-  private get observing(): boolean {
-    if (this.observingSince === undefined) return false;
-    if (Date.now() - this.observingSince > OBSERVATION_TIMEOUT_MS) {
-      this.observingSince = undefined;
-      return false;
-    }
-    return true;
   }
 
   /** The system prompt fragment for the current role, or undefined when off. */
@@ -117,63 +90,38 @@ export class PairController {
   }
 
   async start(ctx: ExtensionContext, cadence: Cadence, overrides: Partial<PairConfig> = {}): Promise<void> {
+    // Starting over a runtime that is already up would strand its watcher. This
+    // also puts the previous tool set back before the new baseline is taken.
+    await this.dispose(ctx);
+
     this.overrides = { ...overrides };
     this.config = makeConfig(cadence, this.overrides);
-    this.state = initialState(Date.now());
     this.role = "navigator";
     this.returnAfterSettled = false;
-    this.active = true;
     this.baselineTools = withoutPairTools(this.pi.getActiveTools());
 
     try {
-      await this.startWatching(ctx);
-      applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
-      this.persist();
-      this.updateUi(ctx);
+      this.session = await PairSession.start(this.sessionDeps(), ctx);
     } catch (error) {
+      // Nothing is watching, so the transcript must not claim otherwise: a
+      // reload would try to restore a session that never came up.
       this.active = false;
       await this.dispose(ctx);
       this.persist();
       throw error;
     }
+
+    this.active = true;
+    applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
+    this.persist();
+    this.updateUi(ctx);
   }
 
-  /** Brings up the watcher and takes the baseline. Shared by `start` and `restore`. */
-  private async startWatching(ctx: ExtensionContext): Promise<void> {
-    this.snapshot = new WorkspaceSnapshot(ctx.cwd, this.config);
-    const ready = await this.createWatcher(ctx).start();
-    await this.snapshot.seed(ready.files);
-    this.seedTruncated = ready.truncated;
-  }
-
-  private createWatcher(ctx: ExtensionContext): EditWatcher {
-    const watcher = new EditWatcher(
-      ctx.cwd,
-      this.config,
-      async (burst) => {
-        await this.observeEdits(burst.paths, ctx);
-      },
-      (at) => {
-        this.state.lastEditAt = at;
-      },
-      (error) => {
-        // The watcher has already torn itself down; keep our own state honest.
-        if (this.watcher === watcher) this.watcher = undefined;
-        void this.stop(ctx);
-        this.hooks.onWatcherError?.(error, ctx);
-      },
-    );
-    this.watcher = watcher;
-    return watcher;
-  }
-
-  /** Releases session resources without changing the persisted on/off choice. */
+  /** Releases the runtime without changing the persisted on/off choice. */
   async dispose(ctx: ExtensionContext | undefined): Promise<void> {
-    await this.watcher?.stop();
-    this.watcher = undefined;
-    this.snapshot = undefined;
-    this.pending = undefined;
-    this.observingSince = undefined;
+    const session = this.session;
+    this.session = undefined;
+    await session?.close();
     if (this.baselineTools !== undefined) this.pi.setActiveTools(this.baselineTools);
     if (ctx?.hasUI) {
       ctx.ui.setWidget("pair", undefined);
@@ -190,7 +138,7 @@ export class PairController {
   setCadence(cadence: Cadence, ctx: ExtensionContext): void {
     // Overrides are kept separately from the resolved config, so a cadence
     // change reapplies the preset without discarding what the driver set.
-    Object.assign(this.config, makeConfig(cadence, this.overrides));
+    this.applyConfig(makeConfig(cadence, this.overrides));
     this.persist();
     this.updateUi(ctx);
   }
@@ -199,25 +147,18 @@ export class PairController {
   async setOverrides(overrides: Partial<PairConfig>, ctx: ExtensionContext): Promise<void> {
     const ignoreChanged = overrides.ignore !== undefined;
     this.overrides = { ...this.overrides, ...overrides };
-    Object.assign(this.config, makeConfig(this.config.cadence, this.overrides));
-    if (this.active && this.baselineTools !== undefined) {
+    this.applyConfig(makeConfig(this.config.cadence, this.overrides));
+    if (this.session && this.baselineTools !== undefined) {
       // extraReadOnlyTools feeds the active tool set, so re-derive it.
       applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
-      if (ignoreChanged) await this.restartWatcher(ctx);
+      if (ignoreChanged) await this.session.restartWatcher();
     }
     this.persist();
     this.updateUi(ctx);
   }
 
-  private async restartWatcher(ctx: ExtensionContext): Promise<void> {
-    await this.watcher?.stop();
-    const ready = await this.createWatcher(ctx).start();
-    await this.snapshot?.seedMissing(ready.files);
-    this.seedTruncated = ready.truncated;
-  }
-
   setMuted(muted: boolean, ctx: ExtensionContext): void {
-    this.state.muted = muted;
+    this.session?.setMuted(muted);
     this.persist();
     this.updateUi(ctx);
   }
@@ -225,7 +166,7 @@ export class PairController {
   setRole(role: Role, ctx: ExtensionContext, options: { returnAfterSettled?: boolean } = {}): void {
     // Anything held from before the handoff describes a tree the agent is about
     // to rewrite, so the patches would be stale by the time they were shown.
-    if (role === "driver") this.pending = undefined;
+    if (role === "driver") this.session?.dropPending();
     this.role = role;
     this.returnAfterSettled = role === "driver" && options.returnAfterSettled === true;
     applyRole(this.pi, role, this.baselineTools ?? [], this.config.extraReadOnlyTools);
@@ -240,13 +181,13 @@ export class PairController {
   }
 
   noteInterjection(ctx: ExtensionContext): void {
-    recordInterjection(this.state, Date.now());
+    this.session?.noteInterjection();
     this.updateUi(ctx);
   }
 
   /** Records a silent look; its compact tool row is the only visible verdict. */
   noteQuiet(_reason: string | undefined, ctx: ExtensionContext): void {
-    this.lastDecision = "";
+    this.session?.noteQuiet();
     this.updateUi(ctx);
   }
 
@@ -254,10 +195,7 @@ export class PairController {
   noteAgentSettled(ctx: ExtensionContext): boolean {
     const shouldReturn = this.role === "driver" && this.returnAfterSettled;
     if (shouldReturn) this.setRole("navigator", ctx);
-    if (this.observingSince !== undefined) {
-      this.observingSince = undefined;
-      this.updateUi(ctx);
-    }
+    if (this.session?.noteAgentSettled()) this.updateUi(ctx);
     return shouldReturn;
   }
 
@@ -266,36 +204,32 @@ export class PairController {
    * kept public so a caller can hand over paths directly without waiting on the
    * filesystem.
    */
-  async observeEdits(paths: string[], ctx: ExtensionContext): Promise<Decision> {
-    return this.enqueueBurst(paths, "edit-burst", ctx);
+  observeEdits(paths: string[], ctx: ExtensionContext): Promise<Decision> {
+    return this.session?.observeEdits(paths, ctx) ?? Promise.resolve(PAIR_OFF);
   }
 
-  /** Records that the driver's shell command failed, which always earns a look. */
-  async reportFailedCommand(command: string, exitCode: number, output: string, ctx: ExtensionContext): Promise<void> {
-    if (!this.active || this.role !== "navigator") return;
-    await this.enqueueBurst([], "failed-command", ctx, { command, exitCode, output });
+  /**
+   * Records that the driver's shell command failed, which always earns a look.
+   *
+   * Nothing awaits this — it happens inside pi's bash backend — so a failure
+   * here is reported through `onLookError` rather than raised at the caller.
+   */
+  reportFailedCommand(command: string, exitCode: number, output: string, ctx: ExtensionContext): void {
+    this.session?.reportFailedCommand({ command, exitCode, output }, ctx);
   }
 
   /** Forces a look right now, regardless of pacing. Used by `/pair look`. */
-  async lookNow(ctx: ExtensionContext, question?: string): Promise<Decision> {
-    if (!this.active) return { observe: false, reason: "pair mode is off" };
-    const paths = this.watcher?.takePending() ?? [];
-    return this.enqueueBurst(paths, "manual", ctx, undefined, question);
-  }
-
-  /** Checks whether the driver has gone quiet long enough to offer help. */
-  async maybeNudge(ctx: ExtensionContext): Promise<void> {
-    if (!this.active || this.role !== "navigator") return;
-    await this.enqueueBurst([], "idle-nudge", ctx);
+  lookNow(ctx: ExtensionContext, question?: string): Promise<Decision> {
+    return this.session?.lookNow(ctx, question) ?? Promise.resolve(PAIR_OFF);
   }
 
   /**
    * Rebuilds the session from the transcript.
    *
    * Notes always come back. The rest only matters when pairing was on when the
-   * session ended, in which case the watcher and tool set are brought back up
-   * too — restoring the label without the machinery would leave the widget
-   * claiming to watch a tree nothing is watching.
+   * session ended, in which case the runtime is brought back up too — restoring
+   * the label without the machinery would leave the widget claiming to watch a
+   * tree nothing is watching.
    */
   async restore(ctx: ExtensionContext): Promise<void> {
     let persisted: PersistedState | undefined;
@@ -304,8 +238,13 @@ export class PairController {
     this.notes = [];
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom") continue;
-      if (entry.customType === NOTE_ENTRY && entry.data) this.notes.push(entry.data as PairNote);
-      if (entry.customType === STATE_ENTRY && entry.data) persisted = entry.data as PersistedState;
+      if (entry.customType === NOTE_ENTRY) {
+        const note = parseNote(entry.data);
+        if (note) this.notes.push(note);
+      }
+      // A state entry that cannot be read leaves the previous one standing,
+      // which is a better answer than pretending the session never paired.
+      if (entry.customType === STATE_ENTRY) persisted = parsePersistedState(entry.data) ?? persisted;
     }
     if (!persisted) return;
 
@@ -313,155 +252,20 @@ export class PairController {
     // run did not settle before shutdown, do not restore a stale permission.
     this.role = persisted.returnAfterSettled ? "navigator" : persisted.role;
     this.returnAfterSettled = false;
-    this.overrides = persisted.overrides ?? {};
+    this.overrides = persisted.overrides;
     this.config = makeConfig(persisted.cadence, this.overrides);
-    this.state = initialState(Date.now());
-    this.state.muted = persisted.muted ?? false;
     if (!persisted.active) return;
 
     this.active = true;
     this.baselineTools = withoutPairTools(persisted.baselineTools ?? this.pi.getActiveTools());
-    await this.startWatching(ctx);
+    this.session = await PairSession.start(this.sessionDeps(), ctx, persisted.muted);
     applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
-  }
-
-  private persist(): void {
-    this.pi.appendEntry<PersistedState>(STATE_ENTRY, {
-      active: this.active,
-      cadence: this.config.cadence,
-      role: this.role,
-      muted: this.state.muted,
-      overrides: this.overrides,
-      baselineTools: this.baselineTools ?? [],
-      returnAfterSettled: this.returnAfterSettled,
-    });
-  }
-
-  private enqueueBurst(
-    paths: string[],
-    trigger: Trigger,
-    ctx: ExtensionContext,
-    command?: Observation["command"],
-    question?: string,
-  ): Promise<Decision> {
-    const run = this.burstQueue.then(() => this.handleBurst(paths, trigger, ctx, command, question));
-    this.burstQueue = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
-
-  private async handleBurst(
-    paths: string[],
-    trigger: Trigger,
-    ctx: ExtensionContext,
-    command?: Observation["command"],
-    question?: string,
-  ): Promise<Decision> {
-    const snapshot = this.snapshot;
-    if (!this.active || !snapshot) return { observe: false, reason: "pair mode is off" };
-    // In driver mode the agent is doing the editing; watching its own diffs
-    // would be a feedback loop, not a pairing session. Its writes still go into
-    // the baseline, so handing the keyboard back does not dump everything the
-    // agent just wrote onto the navigator as if the driver had typed it.
-    if (this.role === "driver" && trigger !== "manual") {
-      if (paths.length > 0) await snapshot.commit(paths);
-      return { observe: false, reason: "agent has the keyboard" };
-    }
-
-    const files = paths.length > 0 ? await snapshot.diff(paths) : [];
-    const observation: Observation = {
-      trigger,
-      at: Date.now(),
-      files,
-      addedLines: files.reduce((sum, file) => sum + file.addedLines, 0),
-      removedLines: files.reduce((sum, file) => sum + file.removedLines, 0),
-      command,
-    };
-    let pending = this.pending;
-    if (pending && paths.length > 0) {
-      // A latest diff replaces an older held diff for every touched path. This
-      // also removes a held change when the driver reverted it to the baseline.
-      const touched = new Set(paths.map((path) => snapshot.toRelative(path)).filter((path) => path !== undefined));
-      const remaining = pending.files.filter((file) => !touched.has(file.path));
-      pending = {
-        ...pending,
-        files: remaining,
-        addedLines: remaining.reduce((sum, file) => sum + file.addedLines, 0),
-        removedLines: remaining.reduce((sum, file) => sum + file.removedLines, 0),
-      };
-    }
-    const merged = pending ? mergeObservations(pending, observation) : observation;
-
-    // Nothing changed and nothing to react to: not worth a round-trip.
-    if (merged.files.length === 0 && !merged.command && trigger === "edit-burst") {
-      this.pending = undefined;
-      return { observe: false, reason: "nothing changed" };
-    }
-
-    const now = Date.now();
-    const decision = this.busyReason(trigger, ctx) ?? shouldObserve(merged, this.state, this.config, now);
-    if (!decision.observe) {
-      // Real edits and failures are held for the next look. Empty idle checks
-      // are simply retried by the timer; presenting them as +0/-0 pending work
-      // makes the widget look broken.
-      this.pending = merged.files.length > 0 || merged.command ? merged : undefined;
-      this.lastDecision = this.pending ? decision.reason : "";
-      this.updateUi(ctx);
-      return decision;
-    }
-
-    this.pending = undefined;
-    if (trigger === "idle-nudge") this.state.lastIdleNudgeAt = now;
-    recordObservation(this.state, now);
-    // Advance the baseline for everything actually shown, not just the paths in
-    // the burst that tripped the threshold: files folded in from earlier held
-    // bursts have been shown too, and re-showing them makes the navigator
-    // repeat itself.
-    const shown = merged.files.map((file) => snapshot.toAbsolute(file.path));
-    if (shown.length > 0) await snapshot.commit(shown);
-
-    const body = renderObservation(merged, this.config.maxFilesPerObservation);
-    const content = question ? `${body}\n\nThe driver also asked: ${question}` : body;
-
-    this.observingSince = Date.now();
-    if (trigger === "manual") {
-      this.pi.sendUserMessage(content, ctx.isIdle() ? undefined : { deliverAs: "followUp" });
-    } else {
-      this.pi.sendMessage(
-        {
-          customType: OBSERVATION_MESSAGE,
-          content,
-          display: false,
-          details: { trigger, files: merged.files.map((f) => f.path) },
-        },
-        { triggerTurn: true, deliverAs: "followUp" },
-      );
-    }
-    this.lastDecision = "";
-    this.updateUi(ctx);
-    return decision;
-  }
-
-  /**
-   * Refuses an unprompted look while a turn is already running.
-   *
-   * The whole point of the pacing is not to interrupt, and queuing a second
-   * observation behind one the navigator has not answered yet interrupts the
-   * navigator instead of the driver. A direct question is exempt — the driver
-   * asked, so they can decide whether the timing is good.
-   */
-  private busyReason(trigger: Trigger, ctx: ExtensionContext): Decision | undefined {
-    if (trigger === "manual") return undefined;
-    if (this.observing) return { observe: false, reason: "still thinking about the last look" };
-    if (!ctx.isIdle()) return { observe: false, reason: "agent is mid-turn" };
-    return undefined;
   }
 
   updateUi(ctx: ExtensionContext): void {
     if (!ctx.hasUI) return;
-    if (!this.active) {
+    const session = this.session;
+    if (!session) {
       ctx.ui.setWidget("pair", undefined);
       ctx.ui.setStatus("pair", undefined);
       return;
@@ -470,7 +274,7 @@ export class PairController {
     const bits = [
       this.role === "navigator" ? "navigator" : "DRIVING",
       this.config.cadence,
-      this.state.muted ? "muted" : undefined,
+      session.muted ? "muted" : undefined,
     ].filter(Boolean);
     ctx.ui.setStatus("pair", `pair: ${bits.join(" · ")}`);
 
@@ -478,16 +282,63 @@ export class PairController {
     // actionable or exceptional state so the same information is not repeated
     // in three places.
     const lines: string[] = [];
-    if (this.pending) {
-      const { addedLines, removedLines, files, command } = this.pending;
+    if (session.pending) {
+      const { addedLines, removedLines, files, command } = session.pending.observation;
       const scope = command
         ? files.length > 0
           ? `failed command · +${addedLines}/-${removedLines} · ${files.length} file(s)`
           : "failed command"
         : `holding +${addedLines}/-${removedLines} · ${files.length} file(s)`;
-      lines.push(`pair · ${scope}${this.lastDecision ? ` · ${this.lastDecision}` : ""}`);
+      lines.push(`pair · ${scope}${session.pending.reason ? ` · ${session.pending.reason}` : ""}`);
     }
-    if (this.seedTruncated) lines.push("pair · baseline truncated · some first edits may appear new");
+    if (session.seedTruncated) lines.push("pair · baseline truncated · some first edits may appear new");
     ctx.ui.setWidget("pair", lines.length > 0 ? lines : undefined);
+  }
+
+  private sessionDeps(): SessionDeps {
+    return {
+      pi: this.pi,
+      config: this.config,
+      now: this.now,
+      role: () => this.role,
+      openWatcher: this.seams.openWatcher,
+      onChanged: (ctx) => this.updateUi(ctx),
+      onWatcherFailed: (error, ctx) => void this.handleWatcherFailure(error, ctx),
+      onLookFailed: (error, ctx) => this.hooks.onLookError?.(error, ctx),
+    };
+  }
+
+  private async handleWatcherFailure(error: Error, ctx: ExtensionContext): Promise<void> {
+    // Tear the runtime down before saying anything, so the status the driver
+    // reads alongside the message is already the truth.
+    try {
+      await this.stop(ctx);
+    } catch {
+      // Teardown is best-effort. The failure being reported is the news.
+    }
+    this.hooks.onWatcherError?.(error, ctx);
+  }
+
+  /**
+   * Replaces the settings in place.
+   *
+   * The watcher and the snapshot hold this same object, which is what lets a
+   * cadence change or a `/pair set` take effect without restarting either.
+   * Assigning a fresh object here would leave both of them on the old settings.
+   */
+  private applyConfig(next: PairConfig): void {
+    Object.assign(this.config, next);
+  }
+
+  private persist(): void {
+    this.pi.appendEntry<PersistedState>(STATE_ENTRY, {
+      active: this.active,
+      cadence: this.config.cadence,
+      role: this.role,
+      muted: this.session?.muted ?? false,
+      overrides: this.overrides,
+      baselineTools: this.baselineTools ?? [],
+      returnAfterSettled: this.returnAfterSettled,
+    });
   }
 }

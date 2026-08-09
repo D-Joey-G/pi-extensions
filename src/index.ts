@@ -11,7 +11,6 @@ import { disablePairTools, isAllowedTool } from "./roles.js";
 import { registerPairTools } from "./tools.js";
 import type { Cadence } from "./types.js";
 
-const IDLE_TICK_MS = 60_000;
 /** Tail of a failed command's output to show the navigator. */
 const FAILURE_OUTPUT_CHARS = 2000;
 
@@ -33,8 +32,6 @@ const SUBCOMMANDS = [
 ] as const;
 
 export default function pairCoding(pi: ExtensionAPI) {
-  let idleTimer: NodeJS.Timeout | undefined;
-
   // Kept for the shutdown path, which has no ctx of its own.
   let lastCtx: ExtensionContext | undefined;
   const remember = <T extends ExtensionContext>(ctx: T): T => {
@@ -44,8 +41,12 @@ export default function pairCoding(pi: ExtensionAPI) {
 
   const controller = new PairController(pi, {
     onWatcherError: (error, ctx) => {
-      stopIdleLoop();
       if (ctx.hasUI) ctx.ui.notify(`Pair mode stopped — the file watcher failed: ${error.message}`, "error");
+    },
+    // A look that fails on its own is not fatal: the next burst gets another
+    // go. Saying nothing would leave the navigator looking merely quiet.
+    onLookError: (error, ctx) => {
+      if (ctx.hasUI) ctx.ui.notify(`Pair mode could not look at the workspace: ${error.message}`, "warning");
     },
   });
 
@@ -81,15 +82,11 @@ export default function pairCoding(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     remember(ctx);
     await controller.restore(ctx);
-    // Pairing may have been on when the session ended, in which case restore
-    // brought the watcher back up and the idle loop has to come with it.
-    if (controller.isActive) startIdleLoop(ctx);
-    else disablePairTools(pi);
+    if (!controller.isActive) disablePairTools(pi);
     controller.updateUi(ctx);
   });
 
   pi.on("session_shutdown", async () => {
-    stopIdleLoop();
     // Cleanup must not turn an active session off in its transcript: reload and
     // resume construct a fresh controller that restores this choice.
     await controller.dispose(lastCtx);
@@ -149,7 +146,7 @@ export default function pairCoding(pi: ExtensionAPI) {
           });
           if (result.exitCode !== null && result.exitCode !== 0) {
             const output = outputTail.toString("utf8").slice(-FAILURE_OUTPUT_CHARS);
-            void controller.reportFailedCommand(command, result.exitCode, output, ctx);
+            controller.reportFailedCommand(command, result.exitCode, output, ctx);
           }
           return result;
         },
@@ -204,13 +201,11 @@ export default function pairCoding(pi: ExtensionAPI) {
           }
           await controller.start(ctx, cadence);
           ctx.ui.notify(`Pair mode on (${cadence}) — you have the keyboard. I'll watch and chime in.`, "info");
-          startIdleLoop(ctx);
           return;
         }
 
         case "off":
           await controller.stop(ctx);
-          stopIdleLoop();
           ctx.ui.notify("Pair mode off. Tools restored.", "info");
           return;
 
@@ -221,7 +216,6 @@ export default function pairCoding(pi: ExtensionAPI) {
           if (!controller.isActive) await controller.start(ctx, cadence);
           else controller.setCadence(cadence, ctx);
           ctx.ui.notify(`Cadence: ${cadence}.`, "info");
-          startIdleLoop(ctx);
           return;
         }
 
@@ -306,19 +300,6 @@ export default function pairCoding(pi: ExtensionAPI) {
     if (controller.isActive) return true;
     ctx.ui.notify("Pair mode is off. Start it with /pair on.", "warning");
     return false;
-  }
-
-  function startIdleLoop(ctx: ExtensionContext): void {
-    if (idleTimer) return;
-    idleTimer = setInterval(() => {
-      void controller.maybeNudge(ctx);
-    }, IDLE_TICK_MS);
-    idleTimer.unref?.();
-  }
-
-  function stopIdleLoop(): void {
-    if (idleTimer) clearInterval(idleTimer);
-    idleTimer = undefined;
   }
 
   // pi claims every ctrl+<letter>, so this has to live under alt. Terminals

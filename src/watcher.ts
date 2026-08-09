@@ -3,18 +3,35 @@ import { type FSWatcher, watch } from "chokidar";
 import { DEFAULT_IGNORE, type PairConfig } from "./config.js";
 import { makeWorkspaceIgnoreMatcher } from "./ignore.js";
 
-export interface EditBurst {
-  /** Absolute paths touched since the previous burst. */
-  paths: string[];
-  at: number;
-}
-
 /** Files discovered by the initial scan, so the snapshot can take a baseline. */
 export interface WatcherReady {
   files: string[];
-  /** True when the scan hit `maxSeedFiles` and some files have no baseline. */
+  /** True when the scan hit `MAX_SEED_FILES` and some files have no baseline. */
   truncated: boolean;
 }
+
+export interface WatcherOptions {
+  root: string;
+  config: PairConfig;
+  /**
+   * Receives the absolute paths touched since the previous burst, once the
+   * driver has stopped typing.
+   *
+   * Whatever this starts owns its own failures. It is not the watcher's error
+   * channel: reporting a failed look through `onError` would stop pairing and
+   * blame the file watcher for something it did not do.
+   */
+  onBurst: (paths: string[]) => void;
+  /** Every raw file event, before the settle window — the driver is still typing. */
+  onEdit?: () => void;
+  /** The watcher died after startup, so the failure is not silent. */
+  onError?: (error: Error) => void;
+}
+
+/** Builds the watcher for a session. Tests substitute one that fails on demand. */
+export type OpenWatcher = (options: WatcherOptions) => EditWatcher;
+
+export const openEditWatcher: OpenWatcher = (options) => new EditWatcher(options);
 
 /** Guard against seeding a monorepo's worth of files into memory at startup. */
 const MAX_SEED_FILES = 5000;
@@ -30,14 +47,7 @@ export class EditWatcher {
   private pending = new Set<string>();
   private timer: NodeJS.Timeout | undefined;
 
-  constructor(
-    private readonly root: string,
-    private readonly config: PairConfig,
-    private readonly onBurst: (burst: EditBurst) => void | Promise<void>,
-    private readonly onEdit?: (at: number) => void,
-    /** Called when the watcher dies after startup, so the failure is not silent. */
-    private readonly onError?: (error: Error) => void,
-  ) {}
+  constructor(protected readonly options: WatcherOptions) {}
 
   /**
    * Starts watching and resolves once the initial scan is done.
@@ -48,8 +58,9 @@ export class EditWatcher {
   async start(): Promise<WatcherReady> {
     if (this.watcher) return { files: [], truncated: false };
 
-    const ignored = await makeWorkspaceIgnoreMatcher(this.root, [...DEFAULT_IGNORE, ...this.config.ignore]);
-    const watcher = watch(this.root, {
+    const { root, config } = this.options;
+    const ignored = await makeWorkspaceIgnoreMatcher(root, [...DEFAULT_IGNORE, ...config.ignore]);
+    const watcher = watch(root, {
       ignored,
       ignoreInitial: true,
       persistent: true,
@@ -73,7 +84,7 @@ export class EditWatcher {
     // widget still claimed to be watching, so tear down and tell the caller.
     watcher.on("error", (error) => {
       void this.stop();
-      this.onError?.(error instanceof Error ? error : new Error(String(error)));
+      this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
     });
 
     // getWatched() lists every watched directory and its entries, where an
@@ -100,11 +111,9 @@ export class EditWatcher {
 
   private record(path: string): void {
     this.pending.add(path);
-    this.onEdit?.(Date.now());
+    this.options.onEdit?.();
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      void this.flush().catch((error) => this.onError?.(error instanceof Error ? error : new Error(String(error))));
-    }, this.config.settleMs);
+    this.timer = setTimeout(() => this.flush(), this.options.config.settleMs);
     // Never hold the process open on the settle timer alone.
     this.timer.unref?.();
   }
@@ -121,10 +130,9 @@ export class EditWatcher {
   }
 
   /** Emits whatever has accumulated, ignoring the settle window. */
-  async flush(): Promise<void> {
+  flush(): void {
     const paths = this.takePending();
-    if (paths.length === 0) return;
-    await this.onBurst({ paths, at: Date.now() });
+    if (paths.length > 0) this.options.onBurst(paths);
   }
 
   async stop(): Promise<void> {
