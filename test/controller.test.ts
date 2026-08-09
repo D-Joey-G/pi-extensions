@@ -269,6 +269,74 @@ test("a session that was pairing comes back pairing", async () => {
   assert.equal(second.sessionNotes.length, 1);
 });
 
+test("session cleanup preserves active state for reload and resume", async () => {
+  const api = fakePi();
+  const ctx = fakeCtx(root);
+  const first = makeController(api, ctx);
+
+  await first.start(ctx, "chatty");
+  await first.dispose(ctx);
+
+  const replayed = fakeCtx(root, api.entries);
+  const second = makeController(api, replayed);
+  await second.restore(replayed);
+  assert.equal(second.isActive, true);
+  assert.equal(second.currentCadence, "chatty");
+});
+
+test("a reverted held-back edit is not reported later", async () => {
+  const api = fakePi();
+  const ctx = fakeCtx(root);
+  const controller = makeController(api, ctx);
+  const small = join(root, "small.ts");
+  const big = join(root, "big.ts");
+  await writeFile(small, "original\n");
+  await writeFile(big, "");
+  await controller.start(ctx, "normal");
+
+  await writeFile(small, "changed\n");
+  await controller.observeEdits([small], ctx);
+  await writeFile(small, "original\n");
+  await controller.observeEdits([small], ctx);
+
+  await writeFile(big, lines(20));
+  await controller.observeEdits([big], ctx);
+  assert.equal(api.sent.length, 1);
+  assert.doesNotMatch(api.sent[0]!.content, /small\.ts/);
+});
+
+test("live config changes reach the watcher and snapshot", async () => {
+  const api = fakePi();
+  const ctx = fakeCtx(root);
+  const controller = makeController(api, ctx);
+  const file = join(root, "a.ts");
+  await writeFile(file, "");
+  await controller.start(ctx, "normal");
+  await controller.setOverrides({ settleMs: 50, maxPatchLines: 8, minChangedLines: 1 }, ctx);
+
+  await writeFile(file, lines(30));
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(api.sent.length, 1, "new settleMs should apply without restarting pair mode");
+  assert.match(api.sent[0]!.content, /more diff lines truncated/);
+});
+
+test("a manual look drains pending watcher paths into one request", async () => {
+  const api = fakePi();
+  const ctx = fakeCtx(root);
+  const controller = makeController(api, ctx);
+  const file = join(root, "a.ts");
+  await writeFile(file, "");
+  await controller.start(ctx, "normal");
+
+  await writeFile(file, lines(20));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await controller.lookNow(ctx, "anything concerning?");
+
+  assert.equal(api.sent.length, 1);
+  assert.equal(api.sent[0]!.kind, "user");
+  assert.match(api.sent[0]!.content, /a\.ts/);
+});
+
 test("a session that was not pairing comes back with its notes only", async () => {
   const api = fakePi();
   const ctx = fakeCtx(root);

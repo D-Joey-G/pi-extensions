@@ -9,7 +9,7 @@ import {
   shouldObserve,
 } from "./policy.js";
 import { DRIVER_HANDOFF_PROMPT, NAVIGATOR_PROMPT, notesContext, renderObservation } from "./prompts.js";
-import { applyRole } from "./roles.js";
+import { applyRole, withoutPairTools } from "./roles.js";
 import type { Cadence, Observation, PairNote, PolicyState, Role, Trigger } from "./types.js";
 import { EditWatcher } from "./watcher.js";
 import { WorkspaceSnapshot } from "./workspace.js";
@@ -65,6 +65,8 @@ export class PairController {
   private lastDecision = "";
   /** True when the repo was too large to baseline fully at startup. */
   private seedTruncated = false;
+  /** Serializes watcher, command-failure, idle, and manual observations. */
+  private burstQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly pi: ExtensionAPI,
@@ -117,76 +119,97 @@ export class PairController {
     this.state = initialState(Date.now());
     this.role = "navigator";
     this.active = true;
-    this.baselineTools = this.pi.getActiveTools();
+    this.baselineTools = withoutPairTools(this.pi.getActiveTools());
 
-    await this.startWatching(ctx);
-    applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
-    this.persist();
-    this.updateUi(ctx);
+    try {
+      await this.startWatching(ctx);
+      applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
+      this.persist();
+      this.updateUi(ctx);
+    } catch (error) {
+      this.active = false;
+      await this.dispose(ctx);
+      this.persist();
+      throw error;
+    }
   }
 
   /** Brings up the watcher and takes the baseline. Shared by `start` and `restore`. */
   private async startWatching(ctx: ExtensionContext): Promise<void> {
     this.snapshot = new WorkspaceSnapshot(ctx.cwd, this.config);
-    this.watcher = new EditWatcher(
+    const ready = await this.createWatcher(ctx).start();
+    await this.snapshot.seed(ready.files);
+    this.seedTruncated = ready.truncated;
+  }
+
+  private createWatcher(ctx: ExtensionContext): EditWatcher {
+    const watcher = new EditWatcher(
       ctx.cwd,
       this.config,
-      (burst) => {
-        void this.observeEdits(burst.paths, ctx);
+      async (burst) => {
+        await this.observeEdits(burst.paths, ctx);
       },
       (at) => {
         this.state.lastEditAt = at;
       },
       (error) => {
         // The watcher has already torn itself down; keep our own state honest.
-        this.watcher = undefined;
+        if (this.watcher === watcher) this.watcher = undefined;
         void this.stop(ctx);
         this.hooks.onWatcherError?.(error, ctx);
       },
     );
-    // Await the initial scan before taking the baseline: edits made while
-    // chokidar is still walking the tree would otherwise be invisible, and an
-    // unseeded snapshot reports the first touched file as wholly new.
-    const ready = await this.watcher.start();
-    await this.snapshot.seed(ready.files);
-    this.seedTruncated = ready.truncated;
+    this.watcher = watcher;
+    return watcher;
   }
 
-  async stop(ctx: ExtensionContext | undefined): Promise<void> {
-    this.active = false;
+  /** Releases session resources without changing the persisted on/off choice. */
+  async dispose(ctx: ExtensionContext | undefined): Promise<void> {
     await this.watcher?.stop();
     this.watcher = undefined;
     this.snapshot = undefined;
     this.pending = undefined;
     this.observingSince = undefined;
-    // An empty baseline is a real tool set, not "nothing captured" — only skip
-    // the restore when no session ever ran.
     if (this.baselineTools !== undefined) this.pi.setActiveTools(this.baselineTools);
-    this.persist();
     if (ctx?.hasUI) {
       ctx.ui.setWidget("pair", undefined);
       ctx.ui.setStatus("pair", undefined);
     }
   }
 
+  async stop(ctx: ExtensionContext | undefined): Promise<void> {
+    this.active = false;
+    await this.dispose(ctx);
+    this.persist();
+  }
+
   setCadence(cadence: Cadence, ctx: ExtensionContext): void {
     // Overrides are kept separately from the resolved config, so a cadence
     // change reapplies the preset without discarding what the driver set.
-    this.config = makeConfig(cadence, this.overrides);
+    Object.assign(this.config, makeConfig(cadence, this.overrides));
     this.persist();
     this.updateUi(ctx);
   }
 
   /** Applies `/pair set` values on top of the current cadence preset. */
-  setOverrides(overrides: Partial<PairConfig>, ctx: ExtensionContext): void {
+  async setOverrides(overrides: Partial<PairConfig>, ctx: ExtensionContext): Promise<void> {
+    const ignoreChanged = overrides.ignore !== undefined;
     this.overrides = { ...this.overrides, ...overrides };
-    this.config = makeConfig(this.config.cadence, this.overrides);
+    Object.assign(this.config, makeConfig(this.config.cadence, this.overrides));
     if (this.active && this.baselineTools !== undefined) {
       // extraReadOnlyTools feeds the active tool set, so re-derive it.
       applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
+      if (ignoreChanged) await this.restartWatcher(ctx);
     }
     this.persist();
     this.updateUi(ctx);
+  }
+
+  private async restartWatcher(ctx: ExtensionContext): Promise<void> {
+    await this.watcher?.stop();
+    const ready = await this.createWatcher(ctx).start();
+    await this.snapshot?.seedMissing(ready.files);
+    this.seedTruncated = ready.truncated;
   }
 
   setMuted(muted: boolean, ctx: ExtensionContext): void {
@@ -235,26 +258,26 @@ export class PairController {
    * filesystem.
    */
   async observeEdits(paths: string[], ctx: ExtensionContext): Promise<Decision> {
-    return this.handleBurst(paths, "edit-burst", ctx);
+    return this.enqueueBurst(paths, "edit-burst", ctx);
   }
 
   /** Records that the driver's shell command failed, which always earns a look. */
   async reportFailedCommand(command: string, exitCode: number, output: string, ctx: ExtensionContext): Promise<void> {
     if (!this.active || this.role !== "navigator") return;
-    await this.handleBurst([], "failed-command", ctx, { command, exitCode, output });
+    await this.enqueueBurst([], "failed-command", ctx, { command, exitCode, output });
   }
 
   /** Forces a look right now, regardless of pacing. Used by `/pair look`. */
   async lookNow(ctx: ExtensionContext, question?: string): Promise<Decision> {
     if (!this.active) return { observe: false, reason: "pair mode is off" };
-    this.watcher?.flush();
-    return this.handleBurst([], "manual", ctx, undefined, question);
+    const paths = this.watcher?.takePending() ?? [];
+    return this.enqueueBurst(paths, "manual", ctx, undefined, question);
   }
 
   /** Checks whether the driver has gone quiet long enough to offer help. */
   async maybeNudge(ctx: ExtensionContext): Promise<void> {
     if (!this.active || this.role !== "navigator") return;
-    await this.handleBurst([], "idle-nudge", ctx);
+    await this.enqueueBurst([], "idle-nudge", ctx);
   }
 
   /**
@@ -285,7 +308,7 @@ export class PairController {
     if (!persisted.active) return;
 
     this.active = true;
-    this.baselineTools = persisted.baselineTools ?? this.pi.getActiveTools();
+    this.baselineTools = withoutPairTools(persisted.baselineTools ?? this.pi.getActiveTools());
     await this.startWatching(ctx);
     applyRole(this.pi, this.role, this.baselineTools, this.config.extraReadOnlyTools);
   }
@@ -299,6 +322,21 @@ export class PairController {
       overrides: this.overrides,
       baselineTools: this.baselineTools ?? [],
     });
+  }
+
+  private enqueueBurst(
+    paths: string[],
+    trigger: Trigger,
+    ctx: ExtensionContext,
+    command?: Observation["command"],
+    question?: string,
+  ): Promise<Decision> {
+    const run = this.burstQueue.then(() => this.handleBurst(paths, trigger, ctx, command, question));
+    this.burstQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async handleBurst(
@@ -328,10 +366,24 @@ export class PairController {
       removedLines: files.reduce((sum, file) => sum + file.removedLines, 0),
       command,
     };
-    const merged = this.pending ? mergeObservations(this.pending, observation) : observation;
+    let pending = this.pending;
+    if (pending && paths.length > 0) {
+      // A latest diff replaces an older held diff for every touched path. This
+      // also removes a held change when the driver reverted it to the baseline.
+      const touched = new Set(paths.map((path) => snapshot.toRelative(path)).filter((path) => path !== undefined));
+      const remaining = pending.files.filter((file) => !touched.has(file.path));
+      pending = {
+        ...pending,
+        files: remaining,
+        addedLines: remaining.reduce((sum, file) => sum + file.addedLines, 0),
+        removedLines: remaining.reduce((sum, file) => sum + file.removedLines, 0),
+      };
+    }
+    const merged = pending ? mergeObservations(pending, observation) : observation;
 
     // Nothing changed and nothing to react to: not worth a round-trip.
     if (merged.files.length === 0 && !merged.command && trigger === "edit-burst") {
+      this.pending = undefined;
       return { observe: false, reason: "nothing changed" };
     }
 

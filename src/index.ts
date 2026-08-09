@@ -7,7 +7,7 @@ import {
 import { isCadence, OVERRIDABLE_KEYS, parseOverride, renderConfig } from "./config.js";
 import { PairController } from "./controller.js";
 import { renderNotes } from "./prompts.js";
-import { isAllowedTool, isReadOnlyCommand } from "./roles.js";
+import { disablePairTools, isAllowedTool, isReadOnlyCommand } from "./roles.js";
 import { registerPairTools } from "./tools.js";
 import type { Cadence } from "./types.js";
 
@@ -50,6 +50,7 @@ export default function pairCoding(pi: ExtensionAPI) {
   });
 
   registerPairTools(pi, {
+    isActive: () => controller.isActive,
     // The gap clock starts when the navigator speaks, not when it looks.
     onInterject: (_kind, _message, ctx) => controller.noteInterjection(remember(ctx)),
     onStayQuiet: (reason, ctx) => controller.noteQuiet(reason, remember(ctx)),
@@ -62,12 +63,15 @@ export default function pairCoding(pi: ExtensionAPI) {
     // Pairing may have been on when the session ended, in which case restore
     // brought the watcher back up and the idle loop has to come with it.
     if (controller.isActive) startIdleLoop(ctx);
+    else disablePairTools(pi);
     controller.updateUi(ctx);
   });
 
   pi.on("session_shutdown", async () => {
     stopIdleLoop();
-    await controller.stop(lastCtx);
+    // Cleanup must not turn an active session off in its transcript: reload and
+    // resume construct a fresh controller that restores this choice.
+    await controller.dispose(lastCtx);
   });
 
   // The navigator's turn is over, so the next burst may be shown.
@@ -132,16 +136,16 @@ export default function pairCoding(pi: ExtensionAPI) {
     return {
       operations: {
         async exec(command, cwd, options) {
-          const chunks: Buffer[] = [];
+          let outputTail = Buffer.alloc(0);
           const result = await local.exec(command, cwd, {
             ...options,
             onData: (data) => {
-              chunks.push(data);
+              outputTail = Buffer.concat([outputTail, data]).subarray(-FAILURE_OUTPUT_CHARS * 4);
               options.onData(data);
             },
           });
           if (result.exitCode !== null && result.exitCode !== 0) {
-            const output = Buffer.concat(chunks).toString("utf8").slice(-FAILURE_OUTPUT_CHARS);
+            const output = outputTail.toString("utf8").slice(-FAILURE_OUTPUT_CHARS);
             void controller.reportFailedCommand(command, result.exitCode, output, ctx);
           }
           return result;
@@ -153,6 +157,23 @@ export default function pairCoding(pi: ExtensionAPI) {
   pi.registerCommand("pair", {
     description: `Pair-coding mode: you drive, the agent navigates (${SUBCOMMANDS.join("|")})`,
     getArgumentCompletions: (prefix: string) => {
+      const setMatch = prefix.match(/^set\s+(\S*)$/);
+      if (setMatch) {
+        const partial = setMatch[1] ?? "";
+        const items = OVERRIDABLE_KEYS.filter((key) => key.startsWith(partial)).map((key) => ({
+          value: `set ${key}`,
+          label: key,
+        }));
+        return items.length > 0 ? items : null;
+      }
+      const onMatch = prefix.match(/^on\s+(\S*)$/);
+      if (onMatch) {
+        const partial = onMatch[1] ?? "";
+        const items = (["quiet", "normal", "chatty"] as const)
+          .filter((cadence) => cadence.startsWith(partial))
+          .map((cadence) => ({ value: `on ${cadence}`, label: cadence }));
+        return items.length > 0 ? items : null;
+      }
       const items = SUBCOMMANDS.filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s }));
       return items.length > 0 ? items : null;
     },
@@ -165,7 +186,14 @@ export default function pairCoding(pi: ExtensionAPI) {
         case "":
         case "on": {
           // `/pair on chatty` starts straight into a cadence.
-          const cadence: Cadence = isCadence(remainder) ? remainder : "normal";
+          let cadence: Cadence = "normal";
+          if (remainder) {
+            if (!isCadence(remainder)) {
+              ctx.ui.notify(`Unknown cadence "${remainder}". Use quiet, normal, or chatty.`, "warning");
+              return;
+            }
+            cadence = remainder;
+          }
           if (controller.isActive) {
             controller.setCadence(cadence, ctx);
             ctx.ui.notify(`Pair mode already on — cadence ${cadence}.`, "info");
@@ -233,7 +261,7 @@ export default function pairCoding(pi: ExtensionAPI) {
             ctx.ui.notify(parsed.error, "warning");
             return;
           }
-          controller.setOverrides(parsed.override, ctx);
+          await controller.setOverrides(parsed.override, ctx);
           ctx.ui.notify(`${key} = ${valueParts.join(" ").trim()}`, "info");
           return;
         }

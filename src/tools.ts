@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import type { PairNote } from "./types.js";
 
 export interface ToolHooks {
+  isActive: () => boolean;
   onInterject: (kind: InterjectKind, message: string, ctx: ExtensionContext) => void;
   /** `reason` is the model's own one-liner; it surfaces in the widget. */
   onStayQuiet: (reason: string | undefined, ctx: ExtensionContext) => void;
@@ -39,6 +40,7 @@ export function registerPairTools(pi: ExtensionAPI, hooks: ToolHooks): void {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!hooks.isActive()) throw new Error("Pair mode is off. Start it with /pair on.");
       hooks.onInterject(params.kind, params.message, ctx);
       const prefix = KIND_PREFIX[params.kind];
       return {
@@ -63,6 +65,7 @@ export function registerPairTools(pi: ExtensionAPI, hooks: ToolHooks): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!hooks.isActive()) throw new Error("Pair mode is off. Start it with /pair on.");
       hooks.onStayQuiet(params.reason, ctx);
       return {
         content: [{ type: "text" as const, text: params.reason ?? "nothing to add" }],
@@ -83,6 +86,7 @@ export function registerPairTools(pi: ExtensionAPI, hooks: ToolHooks): void {
       text: Type.String({ description: "One line. State the substance, not the conversation around it." }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!hooks.isActive()) throw new Error("Pair mode is off. Start it with /pair on.");
       const note: PairNote = { kind: params.kind, text: params.text, at: Date.now() };
       hooks.onNote(note, ctx);
       return {
