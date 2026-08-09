@@ -240,7 +240,10 @@ export default function pairCoding(pi: ExtensionAPI) {
     idleTimer = undefined;
   }
 
-  pi.registerShortcut("ctrl+g", {
+  // pi claims every ctrl+<letter>, so this has to live under alt. Terminals
+  // that send Option as a literal character rather than Meta will not deliver
+  // it; `/pair look` is the portable path.
+  pi.registerShortcut("alt+g", {
     description: "Ask the navigator what it thinks right now",
     handler: async (ctx) => {
       remember(ctx);

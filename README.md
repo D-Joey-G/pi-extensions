@@ -47,7 +47,11 @@ Requires pi ≥ 0.84.1 and Node ≥ 22.19.0.
 | `/pair drive <task>` | Hand over the keyboard for one scoped task. |
 | `/pair navigate` | Take it back. |
 | `/pair status` | Current role, cadence, note count. |
-| `Ctrl+G` | Same as `/pair look`. |
+| `Alt+G` | Same as `/pair look`. |
+
+> pi reserves every `Ctrl+<letter>`, so the shortcut lives under Alt. On macOS
+> terminals you may need "Use Option as Meta key" enabled for it to register;
+> `/pair look` always works regardless.
 
 ### Cadence
 
