@@ -14,6 +14,8 @@ export interface PairConfig {
   idleNudgeMs: number;
   /** Truncate each file's patch to this many lines before sending. */
   maxPatchLines: number;
+  /** Read files up to this size; larger files are represented by metadata only. */
+  maxFileBytes: number;
   /** Hard cap on files described in a single observation. */
   maxFilesPerObservation: number;
   /** Block every bash call outright instead of screening for read-only commands. */
@@ -74,6 +76,7 @@ export function makeConfig(cadence: Cadence = "normal", overrides: Partial<PairC
     cadence,
     ...CADENCE_PRESETS[cadence],
     maxPatchLines: 200,
+    maxFileBytes: 2 * 1024 * 1024,
     maxFilesPerObservation: 12,
     strictBash: false,
     ignore: [],
@@ -99,6 +102,7 @@ const NUMERIC_KEYS = [
   "minChangedLines",
   "idleNudgeMs",
   "maxPatchLines",
+  "maxFileBytes",
   "maxFilesPerObservation",
 ] as const satisfies ReadonlyArray<keyof PairConfig>;
 
@@ -121,6 +125,7 @@ export function parseOverride(key: string, raw: string): ParsedOverride {
   if ((NUMERIC_KEYS as readonly string[]).includes(key)) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return { ok: false, error: `${key} must be a number ≥ 0.` };
+    if (!Number.isInteger(parsed)) return { ok: false, error: `${key} must be a whole number.` };
     // Only idleNudgeMs is meaningfully zero (it disables the nudge); a zero
     // budget or patch cap would silently switch the navigator off.
     if (parsed === 0 && key !== "idleNudgeMs") return { ok: false, error: `${key} must be greater than 0.` };

@@ -128,6 +128,7 @@ Cadence covers most of it. `/pair config` shows the rest, and `/pair set <key>
 | `minChangedLines` | Bursts smaller than this wait for the next one. |
 | `idleNudgeMs` | Offer help after this long with no edits. `0` disables it. |
 | `maxPatchLines` | Truncate each file's diff before sending. |
+| `maxFileBytes` | Represent larger files by size/type metadata instead of reading their contents. |
 | `maxFilesPerObservation` | Cap on files described in one observation. |
 | `strictBash` | `true` refuses bash outright. |
 | `ignore` | Extra ignore globs, comma-separated. |

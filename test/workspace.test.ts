@@ -69,12 +69,26 @@ test("new and deleted files are classified", async () => {
   assert.equal(deleted[0]!.status, "deleted");
 });
 
-test("binary files are skipped rather than dumped into context", async () => {
+test("binary files are represented by metadata rather than dumped into context", async () => {
   const file = join(root, "blob.bin");
   await writeFile(file, Buffer.from([0x00, 0x01, 0x02, 0x00]));
   const snapshot = new WorkspaceSnapshot(root, makeConfig());
   await snapshot.seed([]);
-  assert.deepEqual(await snapshot.diff([file]), []);
+  const changes = await snapshot.diff([file]);
+  assert.equal(changes.length, 1);
+  assert.match(changes[0]!.patch, /binary, 4 bytes/);
+  assert.equal(changes[0]!.patch.includes(String.fromCharCode(0)), false);
+});
+
+test("oversized files are represented without reading their content", async () => {
+  const file = join(root, "large.txt");
+  await writeFile(file, "secret payload that should not enter the patch");
+  const snapshot = new WorkspaceSnapshot(root, makeConfig("normal", { maxFileBytes: 8 }));
+  await snapshot.seed([]);
+  const changes = await snapshot.diff([file]);
+  assert.equal(changes.length, 1);
+  assert.match(changes[0]!.patch, /limit 8/);
+  assert.doesNotMatch(changes[0]!.patch, /secret payload/);
 });
 
 test("paths outside the root are refused", async () => {

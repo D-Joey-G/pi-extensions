@@ -38,7 +38,25 @@ test("a read-only prefix does not launder the rest of a compound command", () =>
 test("redirections and substitutions are treated as writes", () => {
   assert.equal(isReadOnlyCommand("cat a.ts > b.ts"), false);
   assert.equal(isReadOnlyCommand("echo hi >> notes.md"), false);
+  assert.equal(isReadOnlyCommand("echo hi>notes.md"), false);
+  assert.equal(isReadOnlyCommand("npm test 2>errors.log"), false);
   assert.equal(isReadOnlyCommand("echo $(rm -rf /tmp/x)"), false);
+});
+
+test("write-capable flags and arbitrary npm scripts need confirmation", () => {
+  for (const command of [
+    "npm run build",
+    "find . -delete",
+    "find . -exec rm {} ;",
+    "git branch -D old",
+    "git branch new-feature",
+    "git diff --output=changes.patch",
+  ]) {
+    assert.equal(isReadOnlyCommand(command), false, command);
+  }
+  for (const command of ["npm run", "find src -type f", "git branch", "git branch --show-current"]) {
+    assert.equal(isReadOnlyCommand(command), true, command);
+  }
 });
 
 test("segments split on every shell operator", () => {

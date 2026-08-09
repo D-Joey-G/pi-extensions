@@ -87,12 +87,38 @@ export function isReadOnlyCommand(command: string): boolean {
   const segments = splitSegments(command);
   if (segments.length === 0) return false;
   return segments.every((segment) => {
-    // Any redirection can write a file regardless of the verb in front of it.
-    if (/(^|\s)>>?(\s|$)/.test(segment)) return false;
+    // False positives are preferable here: a rejected read asks for confirmation,
+    // while a missed write runs without the driver ever seeing it.
+    if (/[<>]/.test(segment)) return false;
     if (/\$\(|`/.test(segment)) return false;
-    const normalized = segment.replace(/\s+/g, " ").toLowerCase();
+    const normalized = segment.replace(/\s+/g, " ").trim().toLowerCase();
+
+    if (normalized === "npm run") return true; // Lists scripts; running one may write.
+    if (normalized.startsWith("npm run ")) return false;
+    if (
+      normalized.startsWith("find ") &&
+      /(?:^| )-(?:delete|exec|execdir|ok|okdir|fprint|fprintf)(?: |$)/.test(normalized)
+    ) {
+      return false;
+    }
+    if (/^git (?:log|diff|show|blame) .*--(?:output|ext-diff|textconv)(?:[= ]|$)/.test(normalized)) return false;
+    if (normalized.startsWith("git branch ") && !isReadOnlyGitBranch(normalized)) return false;
+
     return READ_ONLY_COMMANDS.some((allowed) => normalized === allowed || normalized.startsWith(`${allowed} `));
   });
+}
+
+function isReadOnlyGitBranch(command: string): boolean {
+  if (command === "git branch") return true;
+  const args = command.slice("git branch ".length);
+  if (
+    /(?:^| )(?:-[dDmMcCfF]|--(?:delete|move|copy|edit-description|set-upstream-to|unset-upstream))(?: |$|=)/.test(args)
+  ) {
+    return false;
+  }
+  return /(?:^| )(?:-[arv]+|--(?:list|show-current|contains|no-contains|merged|no-merged|format|sort|column|color))(?: |$|=)/.test(
+    args,
+  );
 }
 
 /**
@@ -102,18 +128,27 @@ export function isReadOnlyCommand(command: string): boolean {
  * and back restores the driver's own tool configuration rather than pi's
  * defaults.
  */
+export function withoutPairTools(tools: readonly string[]): string[] {
+  return tools.filter((name) => !PAIR_TOOLS.includes(name));
+}
+
+export function disablePairTools(pi: ExtensionAPI): void {
+  pi.setActiveTools(withoutPairTools(pi.getActiveTools()));
+}
+
 export function applyRole(
   pi: ExtensionAPI,
   role: Role,
   baseline: string[],
   extraReadOnlyTools: readonly string[] = [],
 ): void {
+  const cleanBaseline = withoutPairTools(baseline);
   if (role === "driver") {
-    pi.setActiveTools([...new Set([...baseline, ...PAIR_TOOLS])]);
+    pi.setActiveTools([...new Set([...cleanBaseline, ...PAIR_TOOLS])]);
     return;
   }
   // Intersect rather than subtract: the navigator gets what is both enabled in
   // this session and known to be safe.
-  const readOnly = baseline.filter((name) => isAllowedTool(name, extraReadOnlyTools));
+  const readOnly = cleanBaseline.filter((name) => isAllowedTool(name, extraReadOnlyTools));
   pi.setActiveTools([...new Set([...readOnly, ...PAIR_TOOLS])]);
 }

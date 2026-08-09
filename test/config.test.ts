@@ -7,7 +7,7 @@ test("numeric settings are parsed and range-checked", () => {
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.ok && ok.override, { minChangedLines: 20 });
 
-  for (const bad of ["", "lots", "-1"]) {
+  for (const bad of ["", "lots", "-1", "1.5"]) {
     assert.equal(parseOverride("minChangedLines", bad).ok, false, bad);
   }
 });

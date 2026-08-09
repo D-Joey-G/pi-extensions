@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_IGNORE } from "../src/config.js";
-import { globToRegExp, makeIgnoreMatcher } from "../src/ignore.js";
+import { globToRegExp, makeIgnoreMatcher, makeWorkspaceIgnoreMatcher } from "../src/ignore.js";
 
 const ROOT = "/repo";
 
@@ -47,6 +50,24 @@ test("user-supplied globs are honoured", () => {
   assert.equal(ignored("/repo/test/a.snap"), true);
   assert.equal(ignored("/repo/fixtures/big/data.json"), true);
   assert.equal(ignored("/repo/src/a.ts"), false);
+});
+
+test("root and nested .gitignore rules are honoured", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pair-ignore-"));
+  try {
+    await mkdir(join(root, "packages", "app"), { recursive: true });
+    await writeFile(join(root, ".gitignore"), "*.env\nroot-only.txt\n");
+    await writeFile(join(root, "packages", "app", ".gitignore"), "generated/\n!generated/keep.ts\n");
+    const ignored = await makeWorkspaceIgnoreMatcher(root, []);
+
+    assert.equal(ignored(join(root, "secret.env")), true);
+    assert.equal(ignored(join(root, "packages", "app", "secret.env")), true);
+    assert.equal(ignored(join(root, "root-only.txt")), true);
+    assert.equal(ignored(join(root, "packages", "app", "generated")), true);
+    assert.equal(ignored(join(root, "packages", "app", "src", "index.ts")), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("glob translation handles the segment-crossing cases", () => {

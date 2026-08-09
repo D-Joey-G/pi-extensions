@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { type FSWatcher, watch } from "chokidar";
 import { DEFAULT_IGNORE, type PairConfig } from "./config.js";
-import { makeIgnoreMatcher } from "./ignore.js";
+import { makeWorkspaceIgnoreMatcher } from "./ignore.js";
 
 export interface EditBurst {
   /** Absolute paths touched since the previous burst. */
@@ -33,7 +33,7 @@ export class EditWatcher {
   constructor(
     private readonly root: string,
     private readonly config: PairConfig,
-    private readonly onBurst: (burst: EditBurst) => void,
+    private readonly onBurst: (burst: EditBurst) => void | Promise<void>,
     private readonly onEdit?: (at: number) => void,
     /** Called when the watcher dies after startup, so the failure is not silent. */
     private readonly onError?: (error: Error) => void,
@@ -48,11 +48,14 @@ export class EditWatcher {
   async start(): Promise<WatcherReady> {
     if (this.watcher) return { files: [], truncated: false };
 
-    const ignored = makeIgnoreMatcher(this.root, [...DEFAULT_IGNORE, ...this.config.ignore]);
+    const ignored = await makeWorkspaceIgnoreMatcher(this.root, [...DEFAULT_IGNORE, ...this.config.ignore]);
     const watcher = watch(this.root, {
       ignored,
       ignoreInitial: true,
       persistent: true,
+      // Do not follow repository symlinks into files the driver never intended
+      // this workspace (or the model) to inspect.
+      followSymlinks: false,
       // Editors write via temp file + rename; wait for the size to hold still.
       awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
     });
@@ -99,21 +102,29 @@ export class EditWatcher {
     this.pending.add(path);
     this.onEdit?.(Date.now());
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), this.config.settleMs);
+    this.timer = setTimeout(() => {
+      void this.flush().catch((error) => this.onError?.(error instanceof Error ? error : new Error(String(error))));
+    }, this.config.settleMs);
     // Never hold the process open on the settle timer alone.
     this.timer.unref?.();
   }
 
-  /** Emits whatever has accumulated, ignoring the settle window. */
-  flush(): void {
+  /** Removes and returns pending paths without emitting a burst. */
+  takePending(): string[] {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
-    if (this.pending.size === 0) return;
     const paths = [...this.pending];
     this.pending.clear();
-    this.onBurst({ paths, at: Date.now() });
+    return paths;
+  }
+
+  /** Emits whatever has accumulated, ignoring the settle window. */
+  async flush(): Promise<void> {
+    const paths = this.takePending();
+    if (paths.length === 0) return;
+    await this.onBurst({ paths, at: Date.now() });
   }
 
   async stop(): Promise<void> {
