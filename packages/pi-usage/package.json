@@ -1,0 +1,14 @@
+{
+  "name": "@joey/pi-usage",
+  "version": "0.1.0",
+  "description": "Remaining subscription usage for Claude, OpenAI Codex and OpenCode Go, as a /usage overlay and footer status line",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "usage", "quota", "claude", "codex", "opencode-go"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "engines": { "node": ">=18.0.0" },
+  "pi": { "extensions": ["./index.ts"] }
+}
