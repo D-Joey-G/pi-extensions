@@ -7,6 +7,7 @@ Extensions for [pi](https://github.com/earendil-works/pi), the terminal-based co
 | [@djoeyg/pi-usage](packages/pi-usage) | Remaining Claude / OpenAI / OpenCode Go quota as `/usage` overlay and footer status |
 | [@djoeyg/pi-fast](packages/pi-fast) | `/fast` toggle for OpenAI priority service tier |
 | [@djoeyg/pi-tps](packages/pi-tps) | Output tokens per second on the working spinner and footer |
+| [@djoeyg/pi-emoji](packages/pi-emoji) | Slack-style `:emoji:` and kaomoji completion, with custom entries |
 | [@djoeyg/pi-pair](packages/pi-pair) | Pair-coding mode: you drive, the agent navigates |
 
 ## Install

@@ -18,7 +18,8 @@
       "./packages/pi-usage/index.ts",
       "./packages/pi-fast/index.ts",
       "./packages/pi-tps/index.ts",
-      "./packages/pi-pair/src/index.ts"
+      "./packages/pi-pair/src/index.ts",
+      "./packages/pi-emoji/src/index.ts"
     ]
   },
   "devDependencies": {

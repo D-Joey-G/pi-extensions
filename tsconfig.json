@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["packages/pi-usage/*.ts", "packages/pi-fast/*.ts", "packages/pi-tps/*.ts"]
+  "include": ["packages/pi-usage/*.ts", "packages/pi-fast/*.ts", "packages/pi-tps/*.ts", "packages/pi-emoji/src/*.ts"]
 }
