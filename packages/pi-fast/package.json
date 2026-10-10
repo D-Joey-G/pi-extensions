@@ -1,0 +1,13 @@
+{
+  "name": "@joey/pi-fast",
+  "version": "0.1.0",
+  "description": "/fast toggle for OpenAI priority service tier (Fast mode)",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "openai", "priority"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": { "node": ">=18.0.0" },
+  "pi": { "extensions": ["./index.ts"] }
+}

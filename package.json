@@ -2,9 +2,16 @@
   "name": "pi-extensions",
   "private": true,
   "description": "Pi extensions monorepo",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "pi": {
-    "extensions": ["./packages/pi-usage/index.ts"]
+    "extensions": [
+      "./packages/pi-usage/index.ts",
+      "./packages/pi-fast/index.ts",
+      "./packages/pi-tps/index.ts",
+      "./packages/pi-pair/src/index.ts"
+    ]
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^1.0.2",
