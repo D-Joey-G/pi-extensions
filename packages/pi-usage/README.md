@@ -20,6 +20,17 @@ Credentials are only read, never refreshed — run `claude` / `codex` once yours
 
 `https://opencode.ai/zen/go/v1/usage` is undocumented and could change.
 
+## Configuration
+
+By default all three providers show. To hide some, create `~/.pi/agent/pi-usage.json`:
+
+```json
+{ "providers": ["claude"] }
+```
+
+or set the environment variable `PI_USAGE_PROVIDERS=claude,openai`.
+Run `/reload` after changing either.
+
 ## Install
 
 ```shell

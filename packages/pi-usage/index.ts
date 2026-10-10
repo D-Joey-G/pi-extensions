@@ -38,6 +38,33 @@ interface ProviderUsage {
 	footer?: string; // short label used in the footer status
 }
 
+/** Enabled providers come from (first match wins):
+ *  1. $PI_USAGE_PROVIDERS (comma-separated ids)
+ *  2. ~/.pi/agent/pi-usage.json -> { "providers": ["claude", "openai", "opencode-go"] }
+ *  3. default: all three
+ */
+const DEFAULT_PROVIDERS = ["claude", "openai", "opencode-go"];
+
+function loadEnabledProviderIds(): Set<string> {
+	const parse = (raw: string) =>
+		new Set(
+			raw
+				.split(",")
+				.map((s) => s.trim())
+				.filter(Boolean),
+		);
+	if (process.env.PI_USAGE_PROVIDERS) return parse(process.env.PI_USAGE_PROVIDERS);
+	try {
+		const cfg = JSON.parse(readFileSync(join(homedir(), ".pi", "agent", "pi-usage.json"), "utf8"));
+		if (Array.isArray(cfg.providers) && cfg.providers.every((p) => typeof p === "string")) {
+			return new Set(cfg.providers);
+		}
+	} catch {}
+	return new Set(DEFAULT_PROVIDERS);
+}
+
+const ENABLED = loadEnabledProviderIds();
+
 interface Provider {
 	id: string;
 	name: string;
@@ -48,12 +75,24 @@ class SetupError extends Error {}
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n));
 
+class RateLimitError extends Error {
+	constructor(
+		public retryAfterMs?: number,
+	) {
+		super("rate limited");
+	}
+}
+
 async function getJson(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<any> {
 	const res = await fetch(url, { headers, signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
 	if (res.status === 401 || res.status === 403) {
 		const body = await res.text().catch(() => "");
 		if (/expired/i.test(body)) throw new SetupError("login expired");
 		throw new SetupError(`rejected (${res.status})`);
+	}
+	if (res.status === 429) {
+		const ra = Number(res.headers.get("retry-after")) * 1000;
+		throw new RateLimitError(Number.isFinite(ra) && ra > 0 ? ra : undefined);
 	}
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	return res.json();
@@ -82,9 +121,15 @@ const claude: Provider = {
 	async fetch(signal) {
 		const { token, expiresAt, tier } = await readClaudeToken();
 		if (expiresAt && expiresAt < Date.now()) throw new SetupError("login expired - run `claude` once to refresh");
+		// Anthropic rate-limits this endpoint by User-Agent; anything that does not
+		// identify as Claude Code gets persistent 429s, so we send their UA string.
 		const d = await getJson(
 			"https://api.anthropic.com/api/oauth/usage",
-			{ Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+			{
+				Authorization: `Bearer ${token}`,
+				"anthropic-beta": "oauth-2025-04-20",
+				"User-Agent": "claude-code/2.1.0 (external, cli)",
+			},
 			signal,
 		);
 		const rows: [string, string][] = [
@@ -176,7 +221,8 @@ const opencodeGo: Provider = {
 			windows.push({
 				label,
 				usedPct: clamp(w.percent ?? 0),
-				resetsAt: w.resetsAt ? new Date(w.resetsAt) : undefined,
+				// A 0-percent window carries a placeholder reset time, not a real one.
+				resetsAt: w.percent ? (w.resetsAt ? new Date(w.resetsAt) : undefined) : undefined,
 				note: w.status && w.status !== "ok" ? String(w.status) : undefined,
 			});
 		}
@@ -185,15 +231,44 @@ const opencodeGo: Provider = {
 	},
 };
 
-const PROVIDERS = [claude, openai, opencodeGo];
+const PROVIDERS = [claude, openai, opencodeGo].filter((p) => ENABLED.has(p.id));
+
+if (PROVIDERS.length === 0) {
+	throw new Error(
+		`pi-usage: no valid providers in config (valid ids: ${DEFAULT_PROVIDERS.join(", ")})`,
+	);
+}
 
 async function fetchProvider(p: Provider, signal: AbortSignal): Promise<ProviderUsage> {
 	try {
-		return { id: p.id, name: p.name, ...(await p.fetch(signal)) };
+		return { id: p.id, name: p.name, ...(await fetchWithCooldown(p, signal)) };
 	} catch (e: any) {
 		if (signal.aborted) return { id: p.id, name: p.name, windows: [], error: "cancelled" };
 		const setup = e instanceof SetupError;
 		return { id: p.id, name: p.name, windows: [], error: setup ? e.message : `failed: ${e?.message ?? e}` };
+	}
+}
+
+/**
+ * 429 handling: cool the provider down instead of retrying every tick.
+ * Windows keep their last data; the overlay shows the cooling-off note.
+ */
+const COOLDOWN_MS = 10 * 60_000;
+const coolUntil = new Map<string, number>();
+
+async function fetchWithCooldown(p: Provider, signal: AbortSignal): Promise<Omit<ProviderUsage, "id" | "name">> {
+	const until = coolUntil.get(p.id) ?? 0;
+	if (until > Date.now()) {
+		throw new SetupError(`cooling off for ${Math.ceil((until - Date.now()) / 60_000)} min after HTTP 429`);
+	}
+	try {
+		return await p.fetch(signal);
+	} catch (e) {
+		if (e instanceof RateLimitError) {
+			const wait = Math.max(e.retryAfterMs ?? 0, COOLDOWN_MS);
+			coolUntil.set(p.id, Date.now() + wait);
+		}
+		throw e;
 	}
 }
 
