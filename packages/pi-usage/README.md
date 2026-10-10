@@ -34,6 +34,6 @@ Run `/reload` after changing either.
 ## Install
 
 ```shell
-pi install npm:@joey/pi-usage      # once published
-pi install /path/to/pi-extensions  # or from this repo
+pi install npm:@djoeyg/pi-usage
+pi install git:github.com/D-Joey-G/pi-extensions  # or all four extensions
 ```

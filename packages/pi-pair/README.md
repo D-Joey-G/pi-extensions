@@ -23,7 +23,7 @@ It cannot edit your files while navigating. It can ask you to approve a scoped k
 ## Install
 
 ```sh
-pi install git:github.com/joeygoldman/pi-pair
+pi install npm:@djoeyg/pi-pair
 ```
 
 Or for local development, point pi at the checkout:
@@ -32,7 +32,7 @@ Or for local development, point pi at the checkout:
 pi -e ./src/index.ts
 ```
 
-Requires pi ≥ 0.84.1 and Node ≥ 22.19.0.
+Requires pi ≥ 1.1.0 and Node ≥ 22.19.0.
 
 ## Usage
 

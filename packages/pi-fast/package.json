@@ -1,13 +1,40 @@
 {
-  "name": "@joey/pi-fast",
+  "name": "@djoeyg/pi-fast",
   "version": "0.1.0",
   "description": "/fast toggle for OpenAI priority service tier (Fast mode)",
   "type": "module",
-  "keywords": ["pi-package", "pi-extension", "openai", "priority"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "openai",
+    "priority"
+  ],
   "license": "MIT",
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
-  "engines": { "node": ">=18.0.0" },
-  "pi": { "extensions": ["./index.ts"] }
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-fast"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-fast#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

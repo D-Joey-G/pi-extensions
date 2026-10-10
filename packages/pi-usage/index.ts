@@ -56,7 +56,7 @@ function loadEnabledProviderIds(): Set<string> {
 	if (process.env.PI_USAGE_PROVIDERS) return parse(process.env.PI_USAGE_PROVIDERS);
 	try {
 		const cfg = JSON.parse(readFileSync(join(homedir(), ".pi", "agent", "pi-usage.json"), "utf8"));
-		if (Array.isArray(cfg.providers) && cfg.providers.every((p) => typeof p === "string")) {
+		if (Array.isArray(cfg.providers) && cfg.providers.every((p: unknown) => typeof p === "string")) {
 			return new Set(cfg.providers);
 		}
 	} catch {}

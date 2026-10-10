@@ -2,9 +2,17 @@
   "name": "pi-extensions",
   "private": true,
   "description": "Pi extensions monorepo",
+  "license": "MIT",
   "workspaces": [
     "packages/*"
   ],
+  "scripts": {
+    "check": "tsc -p tsconfig.json && npm run check -w @djoeyg/pi-pair",
+    "test": "npm test -w @djoeyg/pi-pair",
+    "lint": "npm run lint -w @djoeyg/pi-pair",
+    "changeset": "changeset",
+    "release": "changeset publish"
+  },
   "pi": {
     "extensions": [
       "./packages/pi-usage/index.ts",
@@ -14,8 +22,11 @@
     ]
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^1.0.2",
-    "@earendil-works/pi-coding-agent": "^1.0.2",
-    "@earendil-works/pi-tui": "^1.0.2"
+    "@changesets/cli": "^2.29.7",
+    "@earendil-works/pi-ai": "^1.1.0",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@earendil-works/pi-tui": "^1.1.0",
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
   }
 }

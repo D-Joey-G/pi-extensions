@@ -6,3 +6,9 @@ Shows output tokens per second for assistant responses.
 - **When a message ends:** the rate is recomputed from the provider-reported `usage.output` and kept in the footer status.
 
 The clock starts at the first streamed content event, so time-to-first-token is excluded and the figure reflects decode speed. Models that reason silently (no thinking deltas streamed) will read high, since their reasoning tokens count toward `usage.output` but the clock starts late.
+
+## Install
+
+```sh
+pi install npm:@djoeyg/pi-tps
+```

@@ -1,5 +1,5 @@
 {
-  "name": "pi-pair",
+  "name": "@djoeyg/pi-pair",
   "version": "0.1.0",
   "description": "Pair-coding mode for pi: you drive the keyboard, the agent navigates — watching your edits, asking questions, and suggesting designs instead of writing code for you",
   "type": "module",
@@ -8,12 +8,6 @@
     "pi-package",
     "pi-extension",
     "pair-programming"
-  ],
-  "files": [
-    "src",
-    "README.md",
-    "DESIGN.md",
-    "LICENSE"
   ],
   "pi": {
     "extensions": [
@@ -40,8 +34,8 @@
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.1",
-    "@earendil-works/pi-tui": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@earendil-works/pi-tui": "^1.1.0",
     "@types/node": "^24.5.2",
     "oxfmt": "^0.62.0",
     "oxlint": "^1.77.0",
@@ -51,5 +45,22 @@
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-pair"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-pair#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "src",
+    "README.md",
+    "DESIGN.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
