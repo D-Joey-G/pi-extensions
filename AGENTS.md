@@ -19,7 +19,8 @@ Merging to `main` opens or updates a "Version packages" PR; merging that PR publ
 1. Create `packages/<name>/` with `index.ts`, `README.md`, `LICENSE` and a `package.json` modelled on `packages/pi-tps/package.json` (`@djoeyg/` scope, `repository.directory`, `files`, `publishConfig.access: public`).
 2. Register it in the root `package.json` `pi.extensions`, and in `tsconfig.json` `include` when it has no tsconfig of its own.
 3. Add a row to the README table.
-4. A brand-new name has to exist on npm before trusted publishing can attach to it. Hand the user these two commands to run themselves, since they need their npm login and 2FA:
+4. Run `npm install --package-lock-only` and commit the `package-lock.json` change. CI runs `npm ci`, which fails when a new workspace is missing from the lockfile. `npm ci --dry-run` confirms it is in sync.
+5. A brand-new name has to exist on npm before trusted publishing can attach to it. Hand the user these two commands to run themselves, since they need their npm login and 2FA:
 
    ```sh
    npm publish -w @djoeyg/<name>

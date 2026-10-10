@@ -20,46 +20,44 @@ const OPENAI_PROVIDERS = new Set(["openai", "openai-codex"]);
 const STATE_FILE = join(homedir(), ".pi", "agent", "fast.json");
 
 function loadEnabled(): boolean {
-	if (!existsSync(STATE_FILE)) return false;
-	try {
-		return JSON.parse(readFileSync(STATE_FILE, "utf8")).enabled === true;
-	} catch {
-		return false;
-	}
+  if (!existsSync(STATE_FILE)) return false;
+  try {
+    return JSON.parse(readFileSync(STATE_FILE, "utf8")).enabled === true;
+  } catch {
+    return false;
+  }
 }
 
 export default function fastExtension(pi: ExtensionAPI) {
-	let enabled = loadEnabled();
+  let enabled = loadEnabled();
 
-	const updateStatus = (ctx: ExtensionContext) => {
-		ctx.ui.setStatus("fast", enabled ? "⚡ fast" : undefined);
-	};
+  const updateStatus = (ctx: ExtensionContext) => {
+    ctx.ui.setStatus("fast", enabled ? "⚡ fast" : undefined);
+  };
 
-	pi.registerCommand("fast", {
-		description: "Toggle OpenAI priority service tier (Fast mode)",
-		getArgumentCompletions: (prefix) =>
-			["on", "off"].filter((v) => v.startsWith(prefix)).map((v) => ({ value: v, label: v })),
-		handler: async (args, ctx) => {
-			const arg = args.trim().toLowerCase();
-			enabled = arg === "on" ? true : arg === "off" ? false : !enabled;
-			writeFileSync(STATE_FILE, `${JSON.stringify({ enabled })}\n`);
-			updateStatus(ctx);
-			const applies = ctx.model && OPENAI_PROVIDERS.has(ctx.model.provider);
-			ctx.ui.notify(
-				enabled
-					? `Fast mode on${applies ? "" : " (applies once an OpenAI model is selected)"}`
-					: "Fast mode off",
-				"info",
-			);
-		},
-	});
+  pi.registerCommand("fast", {
+    description: "Toggle OpenAI priority service tier (Fast mode)",
+    getArgumentCompletions: (prefix) =>
+      ["on", "off"].filter((v) => v.startsWith(prefix)).map((v) => ({ value: v, label: v })),
+    handler: async (args, ctx) => {
+      const arg = args.trim().toLowerCase();
+      enabled = arg === "on" ? true : arg === "off" ? false : !enabled;
+      writeFileSync(STATE_FILE, `${JSON.stringify({ enabled })}\n`);
+      updateStatus(ctx);
+      const applies = ctx.model && OPENAI_PROVIDERS.has(ctx.model.provider);
+      ctx.ui.notify(
+        enabled ? `Fast mode on${applies ? "" : " (applies once an OpenAI model is selected)"}` : "Fast mode off",
+        "info",
+      );
+    },
+  });
 
-	pi.on("session_start", (_event, ctx) => updateStatus(ctx));
+  pi.on("session_start", (_event, ctx) => updateStatus(ctx));
 
-	pi.on("before_provider_request", (event, ctx) => {
-		if (!enabled || !ctx.model || !OPENAI_PROVIDERS.has(ctx.model.provider)) return;
-		const payload = event.payload;
-		if (!payload || typeof payload !== "object") return;
-		return { ...payload, service_tier: "priority" };
-	});
+  pi.on("before_provider_request", (event, ctx) => {
+    if (!enabled || !ctx.model || !OPENAI_PROVIDERS.has(ctx.model.provider)) return;
+    const payload = event.payload;
+    if (!payload || typeof payload !== "object") return;
+    return { ...payload, service_tier: "priority" };
+  });
 }

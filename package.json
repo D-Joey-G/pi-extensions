@@ -8,10 +8,11 @@
   ],
   "scripts": {
     "check": "tsc -p tsconfig.json && npm run check -w @djoeyg/pi-pair",
-    "test": "npm test -w @djoeyg/pi-pair",
-    "lint": "npm run lint -w @djoeyg/pi-pair",
+    "test": "npm test -w @djoeyg/pi-pair -w @djoeyg/pi-emoji",
+    "lint": "oxlint packages && oxfmt --check packages",
     "changeset": "changeset",
-    "release": "changeset publish"
+    "release": "changeset publish",
+    "format": "oxfmt packages"
   },
   "pi": {
     "extensions": [
@@ -28,6 +29,8 @@
     "@earendil-works/pi-coding-agent": "^1.1.0",
     "@earendil-works/pi-tui": "^1.1.0",
     "@types/node": "^24.5.2",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "oxlint": "^1.77.0",
+    "oxfmt": "^0.62.0"
   }
 }

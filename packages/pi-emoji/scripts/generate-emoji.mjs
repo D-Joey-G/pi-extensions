@@ -14,17 +14,17 @@ const sets = ["iamcal", "github", "cldr"].map((name) => read(`shortcodes/${name}
 const out = {};
 const seen = new Set(); // `_` and `-` spellings are the same name to the extension
 for (const emoji of compact) {
-	for (const set of sets) {
-		const codes = set[emoji.hexcode];
-		if (!codes) continue;
-		for (const code of [codes].flat()) {
-			const name = code.toLowerCase();
-			const key = name.replace(/_/g, "-");
-			if (seen.has(key)) continue;
-			seen.add(key);
-			out[name] = emoji.unicode;
-		}
-	}
+  for (const set of sets) {
+    const codes = set[emoji.hexcode];
+    if (!codes) continue;
+    for (const code of [codes].flat()) {
+      const name = code.toLowerCase();
+      const key = name.replace(/_/g, "-");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out[name] = emoji.unicode;
+    }
+  }
 }
 
 const sorted = Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
