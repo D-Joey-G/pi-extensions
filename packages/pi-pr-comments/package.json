@@ -1,0 +1,45 @@
+{
+  "name": "@djoeyg/pi-pr-comments",
+  "version": "0.1.0",
+  "description": "/pr-comments: browse GitHub pull-request review feedback and send threads to pi",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "github",
+    "pull-request",
+    "code-review"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-pr-comments"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-pr-comments#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@djoeyg/pi-ai-pair",
+  "version": "0.1.0",
+  "description": "/ai-pair: one model implements, another reviews in a headless pi, for up to N rounds",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "code-review",
+    "multi-model"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-ai-pair"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-ai-pair#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

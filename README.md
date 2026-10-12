@@ -9,6 +9,9 @@ Extensions for [pi](https://github.com/earendil-works/pi), the terminal-based co
 | [@djoeyg/pi-tps](packages/pi-tps) | Output tokens per second on the working spinner and footer |
 | [@djoeyg/pi-emoji](packages/pi-emoji) | Slack-style `:emoji:` and kaomoji completion, with custom entries |
 | [@djoeyg/pi-pair](packages/pi-pair) | Pair-coding mode: you drive, the agent navigates |
+| [@djoeyg/pi-ai-pair](packages/pi-ai-pair) | `/ai-pair`: one model implements, another reviews, for up to N rounds |
+| [@djoeyg/pi-md](packages/pi-md) | `/md`: save the last assistant message as Markdown |
+| [@djoeyg/pi-pr-comments](packages/pi-pr-comments) | `/pr-comments`: browse GitHub PR review feedback and send threads to pi |
 
 ## Install
 

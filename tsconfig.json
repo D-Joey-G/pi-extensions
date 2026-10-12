@@ -1,15 +1,28 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": [
+      "ES2023"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["packages/pi-usage/*.ts", "packages/pi-fast/*.ts", "packages/pi-tps/*.ts", "packages/pi-emoji/src/*.ts"]
+  "include": [
+    "packages/pi-usage/*.ts",
+    "packages/pi-fast/*.ts",
+    "packages/pi-tps/*.ts",
+    "packages/pi-emoji/src/*.ts",
+    "packages/pi-ai-pair/src/*.ts",
+    "packages/pi-md/*.ts",
+    "packages/pi-pr-comments/src/*.ts",
+    "packages/pi-pr-comments/test/*.ts"
+  ]
 }
