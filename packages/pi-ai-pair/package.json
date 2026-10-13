@@ -1,6 +1,6 @@
 {
   "name": "@djoeyg/pi-ai-pair",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "/ai-pair: one model implements, another reviews in a headless pi, for up to N rounds",
   "type": "module",
   "keywords": [
