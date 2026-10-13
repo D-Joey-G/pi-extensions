@@ -9,12 +9,6 @@ import type { PullRequestInfo } from "./types.ts";
 
 type LoaderResult<T> = { status: "ok"; value: T } | { status: "error"; error: Error } | { status: "cancelled" };
 
-function parseCommandArgs(args: string): { prInput: string; sendAll: boolean } {
-  const parts = args.trim().split(/\s+/).filter(Boolean);
-  const sendAll = parts.includes("--all");
-  return { prInput: parts.filter((part) => part !== "--all").join(" "), sendAll };
-}
-
 function sendMessage(pi: ExtensionAPI, ctx: ExtensionCommandContext, message: string): void {
   if (ctx.isIdle()) {
     pi.sendUserMessage(message);
@@ -80,72 +74,82 @@ async function findPullRequest(
   }
 }
 
+async function runPrComments(
+  pi: ExtensionAPI,
+  args: string,
+  ctx: ExtensionCommandContext,
+  sendAll: boolean,
+): Promise<void> {
+  try {
+    const pr = await findPullRequest(pi, ctx, args.trim());
+    if (!pr) return;
+
+    const items = await withLoader(ctx, `Loading comments for PR #${pr.number}...`, async (signal) => {
+      const feedback = await fetchFeedback(pi, ctx.cwd, pr, signal);
+      return attachSnippets(pi, ctx.cwd, pr, feedback, signal);
+    });
+    if (!items) return;
+
+    if (items.length === 0) {
+      if (ctx.hasUI) ctx.ui.notify(`PR #${pr.number} has no comments`, "info");
+      return;
+    }
+
+    if (ctx.mode !== "tui") {
+      const summary = sendAll
+        ? formatBatchMessage(pr, filterFeedback(items, "unresolved"))
+        : formatCompactSummary(pr, items);
+      if (ctx.mode === "print") {
+        console.log(summary);
+      } else {
+        pi.sendMessage({
+          customType: "pr-comments-summary",
+          content: summary,
+          display: true,
+        });
+      }
+      return;
+    }
+
+    const unresolved = filterFeedback(items, "unresolved");
+    const selected = sendAll
+      ? unresolved.length > 0
+        ? { mode: "unresolved" as const, items: unresolved }
+        : undefined
+      : await showFeedbackBrowser(ctx, pr, items);
+    if (!selected) {
+      if (sendAll) ctx.ui.notify(`PR #${pr.number} has no unresolved comments`, "info");
+      return;
+    }
+
+    if (selected.mode === "unresolved") {
+      const draft = formatBatchMessage(pr, selected.items);
+      const message = await ctx.ui.editor(
+        `Edit ${selected.items.length} unresolved PR comment(s) before sending`,
+        draft,
+      );
+      if (!message?.trim()) return;
+      sendMessage(pi, ctx, message);
+      return;
+    }
+
+    const instructions = await ctx.ui.editor("Additional instructions (submit blank to use the comment as-is)", "");
+    if (instructions === undefined) return;
+    sendMessage(pi, ctx, formatChatMessage(pr, selected.item, instructions));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (ctx.hasUI) ctx.ui.notify(`pr-comments: ${message}`, "error");
+    else console.error(`pr-comments: ${message}`);
+  }
+}
+
 export default function prCommentsExtension(pi: ExtensionAPI): void {
   pi.registerCommand("pr-comments", {
-    description: "Browse PR comments or edit/send all unresolved comments with --all",
-    handler: async (args, ctx) => {
-      try {
-        const { prInput, sendAll } = parseCommandArgs(args);
-        const pr = await findPullRequest(pi, ctx, prInput);
-        if (!pr) return;
-
-        const items = await withLoader(ctx, `Loading comments for PR #${pr.number}...`, async (signal) => {
-          const feedback = await fetchFeedback(pi, ctx.cwd, pr, signal);
-          return attachSnippets(pi, ctx.cwd, pr, feedback, signal);
-        });
-        if (!items) return;
-
-        if (items.length === 0) {
-          if (ctx.hasUI) ctx.ui.notify(`PR #${pr.number} has no comments`, "info");
-          return;
-        }
-
-        if (ctx.mode !== "tui") {
-          const summary = sendAll
-            ? formatBatchMessage(pr, filterFeedback(items, "unresolved"))
-            : formatCompactSummary(pr, items);
-          if (ctx.mode === "print") {
-            console.log(summary);
-          } else {
-            pi.sendMessage({
-              customType: "pr-comments-summary",
-              content: summary,
-              display: true,
-            });
-          }
-          return;
-        }
-
-        const unresolved = filterFeedback(items, "unresolved");
-        const selected = sendAll
-          ? unresolved.length > 0
-            ? { mode: "unresolved" as const, items: unresolved }
-            : undefined
-          : await showFeedbackBrowser(ctx, pr, items);
-        if (!selected) {
-          if (sendAll) ctx.ui.notify(`PR #${pr.number} has no unresolved comments`, "info");
-          return;
-        }
-
-        if (selected.mode === "unresolved") {
-          const draft = formatBatchMessage(pr, selected.items);
-          const message = await ctx.ui.editor(
-            `Edit ${selected.items.length} unresolved PR comment(s) before sending`,
-            draft,
-          );
-          if (!message?.trim()) return;
-          sendMessage(pi, ctx, message);
-          return;
-        }
-
-        const instructions = await ctx.ui.editor("Additional instructions (submit blank to use the comment as-is)", "");
-        if (instructions === undefined) return;
-        sendMessage(pi, ctx, formatChatMessage(pr, selected.item, instructions));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (ctx.hasUI) ctx.ui.notify(`pr-comments: ${message}`, "error");
-        else console.error(`pr-comments: ${message}`);
-      }
-    },
+    description: "Browse PR comments",
+    handler: (args, ctx) => runPrComments(pi, args, ctx, false),
+  });
+  pi.registerCommand("pr-comments:all", {
+    description: "Edit and send all unresolved PR comments",
+    handler: (args, ctx) => runPrComments(pi, args, ctx, true),
   });
 }
