@@ -30,7 +30,14 @@ export interface SourceSnippet {
   fallback: boolean;
 }
 
+export interface StackLayer {
+  pr: PullRequestInfo;
+  position: number;
+  total: number;
+}
+
 export interface FeedbackItem {
+  layer?: StackLayer;
   id: string;
   kind: FeedbackKind;
   author: string;

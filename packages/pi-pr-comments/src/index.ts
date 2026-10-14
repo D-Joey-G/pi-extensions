@@ -2,10 +2,11 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import { showFeedbackBrowser } from "./browser.ts";
 import { filterFeedback } from "./filter.ts";
-import { formatBatchMessage, formatChatMessage, formatCompactSummary } from "./format.ts";
+import { formatBatchMessage, formatChatMessage, formatCompactSummary, formatStackMessage } from "./format.ts";
 import { fetchFeedback, parsePrInput, resolvePullRequest, resolveRepository } from "./github.ts";
 import { attachSnippets } from "./snippets.ts";
-import type { PullRequestInfo } from "./types.ts";
+import { loadStackFeedback, type StackFeedback } from "./stack.ts";
+import type { FeedbackItem, PullRequestInfo } from "./types.ts";
 
 type LoaderResult<T> = { status: "ok"; value: T } | { status: "error"; error: Error } | { status: "cancelled" };
 
@@ -74,6 +75,31 @@ async function findPullRequest(
   }
 }
 
+type FeedbackScope =
+  | { kind: "single"; pr: PullRequestInfo; title: string; items: FeedbackItem[] }
+  | ({ kind: "stack" } & StackFeedback);
+
+async function loadFeedbackScope(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  args: string,
+): Promise<FeedbackScope | undefined> {
+  if (args.trim() === "--stack") {
+    const stack = await withLoader(ctx, "Loading comments for the whole stack...", (signal) =>
+      loadStackFeedback(pi, ctx.cwd, signal),
+    );
+    return stack ? { kind: "stack", ...stack } : undefined;
+  }
+  if (args.split(/\s+/).includes("--stack")) throw new Error("Use --stack alone to load the current checkout's stack");
+  const pr = await findPullRequest(pi, ctx, args.trim());
+  if (!pr) return undefined;
+  const items = await withLoader(ctx, `Loading comments for PR #${pr.number}...`, async (signal) => {
+    const feedback = await fetchFeedback(pi, ctx.cwd, pr, signal);
+    return attachSnippets(pi, ctx.cwd, pr, feedback, signal);
+  });
+  return items ? { kind: "single", pr, title: `PR #${pr.number}: ${pr.title}`, items } : undefined;
+}
+
 async function runPrComments(
   pi: ExtensionAPI,
   args: string,
@@ -81,24 +107,25 @@ async function runPrComments(
   sendAll: boolean,
 ): Promise<void> {
   try {
-    const pr = await findPullRequest(pi, ctx, args.trim());
-    if (!pr) return;
-
-    const items = await withLoader(ctx, `Loading comments for PR #${pr.number}...`, async (signal) => {
-      const feedback = await fetchFeedback(pi, ctx.cwd, pr, signal);
-      return attachSnippets(pi, ctx.cwd, pr, feedback, signal);
-    });
-    if (!items) return;
+    const scope = await loadFeedbackScope(pi, ctx, args);
+    if (!scope) return;
+    const { title, items } = scope;
+    const batchMessage = (feedback: FeedbackItem[]) =>
+      scope.kind === "stack"
+        ? formatStackMessage(title, scope.layers, feedback, true)
+        : formatBatchMessage(scope.pr, feedback);
 
     if (items.length === 0) {
-      if (ctx.hasUI) ctx.ui.notify(`PR #${pr.number} has no comments`, "info");
+      if (ctx.hasUI) ctx.ui.notify(`${title} has no comments`, "info");
       return;
     }
 
     if (ctx.mode !== "tui") {
       const summary = sendAll
-        ? formatBatchMessage(pr, filterFeedback(items, "unresolved"))
-        : formatCompactSummary(pr, items);
+        ? batchMessage(filterFeedback(items, "unresolved"))
+        : scope.kind === "stack"
+          ? formatStackMessage(title, scope.layers, items, false)
+          : formatCompactSummary(scope.pr, items);
       if (ctx.mode === "print") {
         console.log(summary);
       } else {
@@ -116,14 +143,14 @@ async function runPrComments(
       ? unresolved.length > 0
         ? { mode: "unresolved" as const, items: unresolved }
         : undefined
-      : await showFeedbackBrowser(ctx, pr, items);
+      : await showFeedbackBrowser(ctx, title, items);
     if (!selected) {
-      if (sendAll) ctx.ui.notify(`PR #${pr.number} has no unresolved comments`, "info");
+      if (sendAll) ctx.ui.notify(`${title} has no unresolved comments`, "info");
       return;
     }
 
     if (selected.mode === "unresolved") {
-      const draft = formatBatchMessage(pr, selected.items);
+      const draft = batchMessage(selected.items);
       const message = await ctx.ui.editor(
         `Edit ${selected.items.length} unresolved PR comment(s) before sending`,
         draft,
@@ -135,6 +162,8 @@ async function runPrComments(
 
     const instructions = await ctx.ui.editor("Additional instructions (submit blank to use the comment as-is)", "");
     if (instructions === undefined) return;
+    const pr = scope.kind === "single" ? scope.pr : selected.item.layer?.pr;
+    if (!pr) throw new Error("Selected stack comment has no owning PR");
     sendMessage(pi, ctx, formatChatMessage(pr, selected.item, instructions));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -145,11 +174,11 @@ async function runPrComments(
 
 export default function prCommentsExtension(pi: ExtensionAPI): void {
   pi.registerCommand("pr-comments", {
-    description: "Browse PR comments",
+    description: "Browse PR comments (--stack for the whole gh stack)",
     handler: (args, ctx) => runPrComments(pi, args, ctx, false),
   });
   pi.registerCommand("pr-comments:all", {
-    description: "Edit and send all unresolved PR comments",
+    description: "Edit and send all unresolved PR comments (--stack for the whole gh stack)",
     handler: (args, ctx) => runPrComments(pi, args, ctx, true),
   });
 }

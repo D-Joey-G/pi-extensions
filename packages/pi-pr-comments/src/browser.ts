@@ -3,7 +3,7 @@ import { Container, Key, Markdown, matchesKey, SelectList, Text, type SelectItem
 import type { FeedbackFilter } from "./filter.ts";
 import { filterFeedback } from "./filter.ts";
 import { formatPreview, itemDescription, itemLabel } from "./format.ts";
-import type { FeedbackItem, PullRequestInfo } from "./types.ts";
+import type { FeedbackItem } from "./types.ts";
 
 const FILTERS: FeedbackFilter[] = ["all", "unresolved", "resolved"];
 
@@ -16,7 +16,7 @@ export type FeedbackSelection = { mode: "single"; item: FeedbackItem } | { mode:
 
 export async function showFeedbackBrowser(
   ctx: ExtensionCommandContext,
-  pr: PullRequestInfo,
+  heading: string,
   items: FeedbackItem[],
 ): Promise<FeedbackSelection | undefined> {
   const selection = await ctx.ui.custom<FeedbackSelection | null>((tui, theme, _keybindings, done) => {
@@ -44,8 +44,8 @@ export async function showFeedbackBrowser(
     const updateTitle = () => {
       const shown = filterFeedback(items, filter).length;
       title.setText(
-        theme.fg("accent", theme.bold(`PR #${pr.number} comments`)) +
-          theme.fg("muted", ` · ${pr.title} · filter: ${filter} · ${shown}/${items.length} item(s)`),
+        theme.fg("accent", theme.bold(heading)) +
+          theme.fg("muted", ` · filter: ${filter} · ${shown}/${items.length} item(s)`),
       );
     };
     const updatePreview = () => {

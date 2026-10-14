@@ -1,4 +1,4 @@
-import type { FeedbackItem, PullRequestInfo } from "./types.ts";
+import type { FeedbackItem, PullRequestInfo, StackLayer } from "./types.ts";
 
 const MAX_BODY_CHARS = 8_000;
 const MAX_PREVIEW_BODY_CHARS = 1_500;
@@ -31,11 +31,15 @@ export function locationLabel(item: FeedbackItem): string | undefined {
   return line ? `${item.path}:${line}` : item.path;
 }
 
+export function layerLabel(layer: StackLayer): string {
+  return `Layer ${layer.position}/${layer.total} · PR #${layer.pr.number} · ${layer.pr.headRefName}`;
+}
+
 export function itemLabel(item: FeedbackItem): string {
   const marker =
     item.kind === "inline" ? (item.resolved ? "✓" : item.outdated ? "○" : "●") : item.kind === "review" ? "◆" : "◇";
   const location = locationLabel(item);
-  return `${marker} ${item.author}${location ? ` · ${location}` : ""}`;
+  return `${item.layer ? `${layerLabel(item.layer)} · ` : ""}${marker} ${item.author}${location ? ` · ${location}` : ""}`;
 }
 
 export function itemDescription(item: FeedbackItem): string {
@@ -64,6 +68,9 @@ export function formatPreview(item: FeedbackItem): string {
     .filter(Boolean)
     .join(" · ");
   return [
+    item.layer
+      ? `### ${layerLabel(item.layer)}\n\n${item.layer.pr.title}\n\nBase: \`${item.layer.pr.baseRefName}\``
+      : undefined,
     `### ${metadata}`,
     threadMarkdown(item, MAX_PREVIEW_BODY_CHARS),
     sourceMarkdown(item),
@@ -90,6 +97,12 @@ export function formatChatMessage(pr: PullRequestInfo, item: FeedbackItem, addit
     "Help me address this pull request feedback.",
     `PR #${pr.number}: ${pr.title}`,
     pr.url,
+    ...(item.layer
+      ? [
+          layerLabel(item.layer),
+          `Apply changes on branch \`${pr.headRefName}\` (base: \`${pr.baseRefName}\`), then rebase upstack.`,
+        ]
+      : []),
     "",
     `${kindLabel(item)} from @${item.author}${locationLabel(item) ? ` on \`${locationLabel(item)}\`` : ""}:`,
     truncate(item.body, MAX_BODY_CHARS),
@@ -102,8 +115,8 @@ export function formatChatMessage(pr: PullRequestInfo, item: FeedbackItem, addit
     .join("\n");
 }
 
-export function formatBatchMessage(pr: PullRequestInfo, items: FeedbackItem[]): string {
-  const sections = items.map((item, index) => {
+function batchSections(items: FeedbackItem[]): string[] {
+  return items.map((item, index) => {
     const location = locationLabel(item);
     const source = item.snippet
       ? [
@@ -125,15 +138,37 @@ export function formatBatchMessage(pr: PullRequestInfo, items: FeedbackItem[]): 
       .filter((part): part is string => typeof part === "string")
       .join("\n\n");
   });
+}
 
+export function formatBatchMessage(pr: PullRequestInfo, items: FeedbackItem[]): string {
   return [
     "Always begin by discussing with me; never comment on the PR or push anything to remote without asking first.",
     "Help me address all unresolved pull request feedback below.",
     `# PR #${pr.number}: ${pr.title}`,
-    ...sections,
+    ...batchSections(items),
   ]
     .join("\n\n")
     .trimEnd();
+}
+
+export function formatStackMessage(title: string, layers: StackLayer[], items: FeedbackItem[], batch: boolean): string {
+  const sections = layers.map((layer) => {
+    const feedback = items.filter((item) => item.layer?.position === layer.position);
+    const header = `# ${layerLabel(layer)}\n\n${layer.pr.title}\n\n${layer.pr.url}\n\nBranch: \`${layer.pr.headRefName}\` ← \`${layer.pr.baseRefName}\``;
+    const body = batch ? batchSections(feedback).join("\n\n") : formatCompactSummary(layer.pr, feedback);
+    return `${header}\n\n${feedback.length ? body : batch ? "No unresolved review threads." : "No comments."}`;
+  });
+  return [
+    ...(batch
+      ? [
+          "Always begin by discussing with me; never comment on the PR or push anything to remote without asking first.",
+          "Help me address all unresolved pull request feedback across this stack. Make each change on its owning layer's branch, then rebase upstack; do not put lower-layer fixes on the top branch.",
+        ]
+      : []),
+    title,
+    "Layers are ordered bottom-to-top. Merged layers and branches without PRs are skipped.",
+    ...sections,
+  ].join("\n\n");
 }
 
 export function formatCompactSummary(pr: PullRequestInfo, items: FeedbackItem[]): string {
