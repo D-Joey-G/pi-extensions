@@ -1,0 +1,40 @@
+{
+  "name": "@djoeyg/pi-review",
+  "version": "0.1.0",
+  "description": "request_review / steer_review: background code review by an independent, steerable reviewer model",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "code-review",
+    "subagent"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-review"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-review#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

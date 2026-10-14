@@ -23,6 +23,7 @@
     "packages/pi-ai-pair/src/*.ts",
     "packages/pi-md/*.ts",
     "packages/pi-pr-comments/src/*.ts",
-    "packages/pi-pr-comments/test/*.ts"
+    "packages/pi-pr-comments/test/*.ts",
+    "packages/pi-review/src/*.ts"
   ]
 }

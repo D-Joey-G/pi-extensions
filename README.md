@@ -12,6 +12,7 @@ Extensions for [pi](https://github.com/earendil-works/pi), the terminal-based co
 | [@djoeyg/pi-ai-pair](packages/pi-ai-pair) | `/ai-pair`: one model implements, another reviews, for up to N rounds |
 | [@djoeyg/pi-md](packages/pi-md) | `/md`: save the last assistant message as Markdown |
 | [@djoeyg/pi-pr-comments](packages/pi-pr-comments) | `/pr-comments`: browse GitHub PR review feedback and send threads to pi |
+| [@djoeyg/pi-review](packages/pi-review) | `request_review`: background code review by an independent reviewer model the agent can steer |
 
 ## Install
 
