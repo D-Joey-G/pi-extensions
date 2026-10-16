@@ -1,5 +1,11 @@
 # @djoeyg/pi-pr-comments
 
+## 0.3.0
+
+### Minor Changes
+
+- 3c03874: Add whole-stack PR feedback browsing and unresolved batches with layer ownership and per-PR source snippets.
+
 ## 0.2.0
 
 ### Minor Changes

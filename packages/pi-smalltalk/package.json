@@ -1,6 +1,6 @@
 {
   "name": "@djoeyg/pi-smalltalk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Swap pi's file and shell tools for a persistent Pharo Smalltalk image: inspect_world, define_expression, execute_expression",
   "type": "module",
   "keywords": [
