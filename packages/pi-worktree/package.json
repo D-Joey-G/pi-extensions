@@ -1,6 +1,6 @@
 {
   "name": "@djoeyg/pi-worktree",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "/worktree: fork the session into a git worktree and run it in a tab inside pi, in parallel with the main session",
   "type": "module",
   "keywords": [
