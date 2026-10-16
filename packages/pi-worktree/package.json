@@ -1,0 +1,41 @@
+{
+  "name": "@djoeyg/pi-worktree",
+  "version": "0.1.0",
+  "description": "/worktree: fork the session into a git worktree and run it in a tab inside pi, in parallel with the main session",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "git-worktree",
+    "tabs"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-worktree"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-worktree#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
