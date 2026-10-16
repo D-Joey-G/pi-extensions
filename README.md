@@ -13,6 +13,7 @@ Extensions for [pi](https://github.com/earendil-works/pi), the terminal-based co
 | [@djoeyg/pi-md](packages/pi-md) | `/md`: save the last assistant message as Markdown |
 | [@djoeyg/pi-pr-comments](packages/pi-pr-comments) | `/pr-comments`: browse GitHub PR review feedback and send threads to pi |
 | [@djoeyg/pi-review](packages/pi-review) | `request_review`: background code review by an independent reviewer model the agent can steer |
+| [@djoeyg/pi-smalltalk](packages/pi-smalltalk) | `/smalltalk`: swap file and shell tools for a persistent Pharo image the agent inspects, defines and evaluates in |
 
 ## Install
 

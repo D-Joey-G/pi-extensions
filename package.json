@@ -24,7 +24,8 @@
       "./packages/pi-ai-pair/src/index.ts",
       "./packages/pi-md/index.ts",
       "./packages/pi-pr-comments/src/index.ts",
-      "./packages/pi-review/src/index.ts"
+      "./packages/pi-review/src/index.ts",
+      "./packages/pi-smalltalk/src/index.ts"
     ]
   },
   "devDependencies": {

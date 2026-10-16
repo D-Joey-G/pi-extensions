@@ -1,0 +1,40 @@
+{
+  "name": "@djoeyg/pi-smalltalk",
+  "version": "0.1.0",
+  "description": "Swap pi's file and shell tools for a persistent Pharo Smalltalk image: inspect_world, define_expression, execute_expression",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "smalltalk",
+    "pharo"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-smalltalk"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-smalltalk#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

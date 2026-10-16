@@ -24,6 +24,7 @@
     "packages/pi-md/*.ts",
     "packages/pi-pr-comments/src/*.ts",
     "packages/pi-pr-comments/test/*.ts",
-    "packages/pi-review/src/*.ts"
+    "packages/pi-review/src/*.ts",
+    "packages/pi-smalltalk/src/*.ts"
   ]
 }
