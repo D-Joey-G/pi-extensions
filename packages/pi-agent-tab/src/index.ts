@@ -1,17 +1,22 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+  DEFAULT_MODEL,
+  describeModes,
+  discoverModes,
+  expandPath,
+  findMode,
+  modeDirs,
+  resolveLaunch,
+  resolveSkill,
+  type ModeCatalog,
+} from "./modes.ts";
 
-const DEFAULT_MODEL = "openai/gpt-6.1-terra";
-const READ_ONLY_TOOLS = ["read", "bash", "ffgrep", "fffind", "write", "intercom"];
-// The child must always be able to write its report and signal the parent.
-const REQUIRED_TOOLS = ["write", "intercom"];
-// Pi's defaults plus intercom; no grandchildren.
-const WRITABLE_TOOLS_SPEC = "+intercom,-agent";
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const SCRATCH_ROOT = join(tmpdir(), "pi-agent-tab");
 const FALLBACK_POLL_MS = 2000;
@@ -66,10 +71,6 @@ async function resolveModel(pi: ExtensionAPI, requested: string): Promise<string
   throw new Error(`Model "${name}" ${why}. Closest: ${closest.join(", ")}`);
 }
 
-function expandPath(base: string, path: string): string {
-  return resolve(base, path.replace(/^~(?=$|\/)/, homedir()));
-}
-
 function makeLabel(task: string): string {
   const slug = task
     .toLowerCase()
@@ -86,6 +87,7 @@ function buildBrief(o: {
   task: string;
   label: string;
   readOnly: boolean;
+  skillFiles: string[];
   reportPath: string;
   parentIntercomId: string | undefined;
 }): string {
@@ -108,8 +110,12 @@ function buildBrief(o: {
         `If you are blocked on a decision only the parent can make, use intercom({ action: "ask", to: "${o.parentIntercomId}", message: "..." }).`,
       ]
     : [];
+  const skills = o.skillFiles.length
+    ? ["", "Before starting, read these skills and follow them:", ...o.skillFiles.map((f) => `- ${f}`)]
+    : [];
   return [
     preamble,
+    ...skills,
     "",
     "## Task",
     "",
@@ -168,114 +174,165 @@ export default function (pi: ExtensionAPI) {
     watchers.clear();
   });
 
-  pi.registerTool(
-    defineTool({
-      name: "agent",
-      label: "Agent",
-      description:
-        "Launch a subagent: a separate pi process in its own background Rex tab, briefed with `task`. Returns at once with the tab's blockId and the reportPath the subagent will write. When finished, the subagent writes a markdown report to reportPath and messages this session via intercom, which starts a new turn here. readOnly (default true) limits it to read,bash,ffgrep,fffind,write,intercom and tells it to change nothing but the report; readOnly=false gives pi's default tools plus intercom.",
-      promptSnippet: "Launch a subagent (pi in a background Rex tab) that reports back via intercom",
-      promptGuidelines: [
-        "A subagent means the agent tool: a pi process in its own Rex tab. Give agent a self-contained task; the subagent sees none of this conversation.",
-        "After calling agent, keep working or end your turn. Never sleep, poll, `rex wait` or read the report early: the subagent sends an intercom message naming reportPath when done, then read the report.",
-      ],
-      parameters: Type.Object({
-        task: Type.String({
-          description:
-            "Complete, self-contained brief: goal, relevant paths, constraints, what the report must contain.",
-        }),
-        cwd: Type.String({ description: "Working directory for the subagent (absolute, ~ or relative to yours)." }),
-        model: Type.Optional(
-          Type.String({ description: `provider/id[:thinking] from pi --list-models. Default ${DEFAULT_MODEL}.` }),
-        ),
-        tools: Type.Optional(
-          Type.Array(Type.String(), {
-            description: "Exact tool allowlist, replacing the readOnly default. write and intercom are always added.",
+  // Project modes are prompts and model choices from the repo, so they need project trust.
+  function loadModes(ctx: ExtensionContext | undefined): ModeCatalog {
+    return discoverModes(modeDirs(getAgentDir(), ctx?.isProjectTrusted() ? ctx.cwd : undefined));
+  }
+
+  function skillFiles(entries: string[], base: string): string[] {
+    const known = new Map(
+      pi
+        .getCommands()
+        .filter((c) => c.source === "skill")
+        .map((c) => [c.name.replace(/^skill:/, ""), c.sourceInfo.path]),
+    );
+    return entries.map((e) => resolveSkill(e, base, known));
+  }
+
+  function registerAgentTool(catalog: ModeCatalog): void {
+    const modes = describeModes(catalog);
+    pi.registerTool(
+      defineTool({
+        name: "agent",
+        label: "Agent",
+        description: [
+          "Launch a subagent: a separate pi process in its own background Rex tab, briefed with `task`. Returns at once with the tab's blockId and the reportPath the subagent will write. When finished, the subagent writes a markdown report to reportPath and messages this session via intercom, which starts a new turn here.",
+          "A mode presets model, tools and a role prompt; explicit model, tools, readOnly and skills override it. Without a mode, readOnly (default true) limits it to read,bash,ffgrep,fffind,write,intercom and tells it to change nothing but the report; readOnly=false gives pi's default tools plus intercom.",
+          ...(modes ? ["", "Modes:", modes] : []),
+        ].join("\n"),
+        promptSnippet: "Launch a subagent (pi in a background Rex tab) that reports back via intercom",
+        promptGuidelines: [
+          "A subagent means the agent tool: a pi process in its own Rex tab. Give agent a self-contained task; the subagent sees none of this conversation.",
+          "Pick an agent mode when one fits the job (e.g. scout to find things, worker to change code, review to review it).",
+          "After calling agent, keep working or end your turn. Never sleep, poll, `rex wait` or read the report early: the subagent sends an intercom message naming reportPath when done, then read the report.",
+        ],
+        parameters: Type.Object({
+          task: Type.String({
+            description:
+              "Complete, self-contained brief: goal, relevant paths, constraints, what the report must contain.",
           }),
-        ),
-        label: Type.Optional(
-          Type.String({ description: "Tab label and session name. Default: derived from task, unique." }),
-        ),
-        readOnly: Type.Optional(Type.Boolean({ description: "Default true." })),
-      }),
-      outputSchema,
-      async execute(_id, params, signal, _onUpdate, ctx) {
-        const rexBlock = process.env.REX_BLOCK?.trim();
-        if (!rexBlock) {
-          throw new Error(
-            "agent needs Rex: REX_BLOCK is not set, so this pi is not running in a Rex terminal. Start pi inside Rex.",
+          cwd: Type.String({ description: "Working directory for the subagent (absolute, ~ or relative to yours)." }),
+          mode: Type.Optional(Type.String({ description: "Mode name from the list in this tool's description." })),
+          model: Type.Optional(
+            Type.String({
+              description: `provider/id[:thinking] from pi --list-models. Default: the mode's, else ${DEFAULT_MODEL}.`,
+            }),
+          ),
+          tools: Type.Optional(
+            Type.Array(Type.String(), {
+              description: "Exact tool allowlist, replacing the readOnly default. write and intercom are always added.",
+            }),
+          ),
+          skills: Type.Optional(
+            Type.Array(Type.String(), {
+              description: "Skill names or paths the subagent reads before starting. Replaces the mode's skills.",
+            }),
+          ),
+          label: Type.Optional(
+            Type.String({ description: "Tab label and session name. Default: derived from task, unique." }),
+          ),
+          readOnly: Type.Optional(Type.Boolean({ description: "Default: the mode's, else true." })),
+        }),
+        outputSchema,
+        async execute(_id, params, signal, _onUpdate, ctx) {
+          const rexBlock = process.env.REX_BLOCK?.trim();
+          if (!rexBlock) {
+            throw new Error(
+              "agent needs Rex: REX_BLOCK is not set, so this pi is not running in a Rex terminal. Start pi inside Rex.",
+            );
+          }
+          const cwd = expandPath(ctx.cwd, params.cwd);
+          if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new Error(`cwd is not a directory: ${cwd}`);
+
+          // Re-read so mode edits apply without /reload.
+          const mode = params.mode ? findMode(loadModes(ctx), params.mode.trim()) : undefined;
+          const launch = resolveLaunch(params, mode);
+          const model = await resolveModel(pi, launch.model);
+          const skills = skillFiles(launch.skills, ctx.cwd);
+          const label = params.label?.trim().replace(/\s+/g, "-") || makeLabel(params.task);
+
+          await mkdir(SCRATCH_ROOT, { recursive: true });
+          const dir = await mkdtemp(join(SCRATCH_ROOT, `${label.replace(/[^\w.-]/g, "_")}-`));
+          const briefPath = join(dir, "brief.md");
+          const reportPath = join(dir, "report.md");
+          // pi-intercom publishes this session's routing ID here.
+          const parentIntercomId = process.env.PI_INTERCOM_SESSION_ID?.trim() || undefined;
+          await writeFile(
+            briefPath,
+            buildBrief({
+              task: params.task,
+              label,
+              readOnly: launch.readOnly,
+              skillFiles: skills,
+              reportPath,
+              parentIntercomId,
+            }),
           );
-        }
-        const cwd = expandPath(ctx.cwd, params.cwd);
-        if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new Error(`cwd is not a directory: ${cwd}`);
+          const piArgs = ["--model", model, "--tools", launch.tools, "--name", label];
+          for (const skill of skills) piArgs.push("--skill", skill);
+          if (launch.prompt) {
+            const promptPath = join(dir, "mode.md");
+            await writeFile(promptPath, launch.prompt);
+            piArgs.push("--append-system-prompt", promptPath);
+          }
 
-        const model = await resolveModel(pi, params.model?.trim() || DEFAULT_MODEL);
-        const readOnly = params.readOnly ?? true;
-        const toolsArg = params.tools
-          ? [...new Set([...params.tools, ...REQUIRED_TOOLS])].join(",")
-          : readOnly
-            ? READ_ONLY_TOOLS.join(",")
-            : WRITABLE_TOOLS_SPEC;
-        const label = params.label?.trim().replace(/\s+/g, "-") || makeLabel(params.task);
+          const rex = await pi.exec(
+            "rex",
+            [
+              "run",
+              "-s",
+              rexBlock,
+              "-c",
+              cwd,
+              "--label",
+              label,
+              "--keep-open",
+              "--focus=false",
+              "--json",
+              "--",
+              "pi",
+              ...piArgs,
+              // File reference: the brief never passes through a shell as text.
+              `@${briefPath}`,
+            ],
+            { signal, timeout: 30_000 },
+          );
+          if (rex.code !== 0) throw new Error(`rex run failed (${rex.code}): ${(rex.stderr || rex.stdout).trim()}`);
+          let blockId: string;
+          try {
+            blockId = JSON.parse(rex.stdout).block_ids[0];
+          } catch {
+            throw new Error(`Unexpected rex run output: ${rex.stdout.trim()}`);
+          }
+          if (!parentIntercomId) watchReport(label, reportPath);
 
-        await mkdir(SCRATCH_ROOT, { recursive: true });
-        const dir = await mkdtemp(join(SCRATCH_ROOT, `${label.replace(/[^\w.-]/g, "_")}-`));
-        const briefPath = join(dir, "brief.md");
-        const reportPath = join(dir, "report.md");
-        // pi-intercom publishes this session's routing ID here.
-        const parentIntercomId = process.env.PI_INTERCOM_SESSION_ID?.trim() || undefined;
-        await writeFile(briefPath, buildBrief({ task: params.task, label, readOnly, reportPath, parentIntercomId }));
+          const out = { blockId, label, reportPath, briefPath };
+          const how = parentIntercomId
+            ? "It will send you an intercom message naming reportPath when done."
+            : "This session has no intercom ID; the extension will post a message here when reportPath appears.";
+          const desc = [mode && `mode ${mode.name}`, model, launch.readOnly ? "read-only" : "read-write"]
+            .filter(Boolean)
+            .join(", ");
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Launched subagent ${label} (${desc}) in Rex block ${blockId}.\nreportPath: ${reportPath}\nbriefPath: ${briefPath}\n${how} Keep working; do not sleep or poll.`,
+              },
+            ],
+            structuredContent: out,
+            details: out,
+          };
+        },
+      }),
+    );
+  }
 
-        const rex = await pi.exec(
-          "rex",
-          [
-            "run",
-            "-s",
-            rexBlock,
-            "-c",
-            cwd,
-            "--label",
-            label,
-            "--keep-open",
-            "--focus=false",
-            "--json",
-            "--",
-            "pi",
-            "--model",
-            model,
-            "--tools",
-            toolsArg,
-            "--name",
-            label,
-            // File reference: the brief never passes through a shell as text.
-            `@${briefPath}`,
-          ],
-          { signal, timeout: 30_000 },
-        );
-        if (rex.code !== 0) throw new Error(`rex run failed (${rex.code}): ${(rex.stderr || rex.stdout).trim()}`);
-        let blockId: string;
-        try {
-          blockId = JSON.parse(rex.stdout).block_ids[0];
-        } catch {
-          throw new Error(`Unexpected rex run output: ${rex.stdout.trim()}`);
-        }
-        if (!parentIntercomId) watchReport(label, reportPath);
+  registerAgentTool(loadModes(undefined));
 
-        const out = { blockId, label, reportPath, briefPath };
-        const how = parentIntercomId
-          ? "It will send you an intercom message naming reportPath when done."
-          : "This session has no intercom ID; the extension will post a message here when reportPath appears.";
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Launched subagent ${label} (${model}, ${readOnly ? "read-only" : "read-write"}) in Rex block ${blockId}.\nreportPath: ${reportPath}\nbriefPath: ${briefPath}\n${how} Keep working; do not sleep or poll.`,
-            },
-          ],
-          structuredContent: out,
-          details: out,
-        };
-      },
-    }),
-  );
+  pi.on("session_start", (_event, ctx) => {
+    const catalog = loadModes(ctx);
+    registerAgentTool(catalog);
+    if (catalog.problems.length) ctx.ui.notify(catalog.problems.join("\n"), "warning");
+  });
 }

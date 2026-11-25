@@ -36,5 +36,8 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
   }
 }

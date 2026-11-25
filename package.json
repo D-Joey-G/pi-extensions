@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "check": "tsc -p tsconfig.json && npm run check -w @djoeyg/pi-pair",
-    "test": "npm test -w @djoeyg/pi-pair -w @djoeyg/pi-emoji -w @djoeyg/pi-pr-comments",
+    "test": "npm test -w @djoeyg/pi-pair -w @djoeyg/pi-emoji -w @djoeyg/pi-pr-comments -w @djoeyg/pi-agent-tab",
     "lint": "oxlint packages && oxfmt --check packages",
     "changeset": "changeset",
     "release": "changeset publish",

@@ -3,7 +3,7 @@
 Gives the agent an `agent` tool that launches a subagent: a separate pi process in its own background Rex tab. The tool returns at once. When the subagent finishes, it writes a markdown report and sends the parent an intercom message, which starts a turn in the parent.
 
 ```
-agent({ task, cwd, model?, tools?, readOnly?, label? })
+agent({ task, cwd, mode?, model?, tools?, readOnly?, skills?, label? })
   → { blockId, label, reportPath, briefPath }
 ```
 
@@ -13,7 +13,8 @@ The tool writes the task to `$TMPDIR/pi-agent-tab/<label>-XXXXXX/brief.md` with 
 
 ```
 rex run -s $REX_BLOCK -c <cwd> --label <label> --keep-open --focus=false --json -- \
-  pi --model <model> --tools <tools> --name <label> @brief.md
+  pi --model <model> --tools <tools> --name <label> \
+     [--skill <file>]... [--append-system-prompt mode.md] @brief.md
 ```
 
 - **Model:** `provider/id[:thinking]` or a bare id, checked against `pi --list-models`. Unknown or ambiguous names fail with the closest matches. Default `openai/gpt-6.1-terra`.
@@ -21,6 +22,54 @@ rex run -s $REX_BLOCK -c <cwd> --label <label> --keep-open --focus=false --json 
 - **Completion:** the parent's intercom ID comes from `PI_INTERCOM_SESSION_ID`, which [pi-intercom](https://www.npmjs.com/package/pi-intercom) sets. Without it, the extension watches the report file and posts a message when it appears.
 
 Read-only is a prompt instruction, not a sandbox: the child still has `bash`. Subagent tabs stay open after they report; close them yourself.
+
+## Modes
+
+A mode presets the model, tools and a role prompt for a kind of job. The `agent` tool's description lists the available modes, so the agent can pick one.
+
+| Mode | Model | Access | For |
+| ---- | ----- | ------ | --- |
+| `scout` | `openai/gpt-6.1-terra` | read-only | Finding code and facts, reported with `path:line` evidence |
+| `worker` | `openai/gpt-6.1-terra` | read-write | Implementing a bounded change and verifying it |
+| `review` | `claude-bridge/claude-opus-5-5` | read-only | A strict one-shot review with findings and a verdict |
+
+`review` is a single pass in a tab. For a review the agent can argue with and re-run, use [pi-review](../pi-review).
+
+A mode is a markdown file. The frontmatter sets the launch; the body is appended to the child's system prompt.
+
+```markdown
+---
+name: docs
+description: Updates READMEs and docs to match the code. Does not touch source.
+model: claude-bridge/claude-opus-5-5:high
+readOnly: false
+tools: read, bash, edit, write
+skills: [writing-for-agents, ./skills/house-style]
+---
+
+You update documentation only. Read the code first; never change it.
+```
+
+| Field | Required | Meaning |
+| ----- | -------- | ------- |
+| `name` | yes | What `mode` refers to. Letters, digits, `_` and `-`. |
+| `description` | yes | One line, shown in the tool description. |
+| `model` | no | `provider/id[:thinking]`. Default `openai/gpt-6.1-terra`. |
+| `readOnly` | no | Default `true`. As for the tool argument. |
+| `tools` | no | Exact allowlist, as a list or comma-separated. `write` and `intercom` are always added. |
+| `skills` | no | Skill names, or paths relative to the mode file. The child gets each with `--skill` and is told to read it before starting. |
+
+Other fields are an error, so a typo does not silently do nothing.
+
+Modes load from three places. A later one replaces an earlier one with the same name:
+
+1. The built-ins in this package.
+2. `~/.pi/agent/agent-modes/*.md`.
+3. `.pi/agent-modes/*.md` in the session's working directory, once the project is trusted.
+
+Files are re-read on every launch. The tool description updates at session start and on `/reload`. A malformed file is skipped with a warning naming it, and launching a mode that is unknown or malformed fails with the reason.
+
+Explicit arguments override the mode field by field: `model`, `readOnly`, `tools` and `skills` each replace the mode's value when given. For example, `agent({ mode: "scout", readOnly: false, ... })` keeps scout's model and prompt but gives the child write tools.
 
 ## Requirements
 
