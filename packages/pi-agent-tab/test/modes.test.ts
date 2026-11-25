@@ -7,6 +7,7 @@ import {
   BUILTIN_MODES_DIR,
   DEFAULT_MODEL,
   discoverModes,
+  expandModelAlias,
   findMode,
   modeDirs,
   parseMode,
@@ -88,7 +89,7 @@ test("built-in modes parse with the expected models and access", () => {
   assert.deepEqual(problems, []);
   const summary = [...modes.values()].map((m) => [m.name, m.model, m.readOnly]).sort();
   assert.deepEqual(summary, [
-    ["review", "claude-bridge/claude-opus-5-5", true],
+    ["review", "claude-bridge/claude-opus-5-5:high", true],
     ["scout", "openai/gpt-6.1-terra", true],
     ["worker", "openai/gpt-6.2-sol", false],
   ]);
@@ -150,4 +151,12 @@ test("resolveSkill maps names through the known skills and paths against the bas
   assert.equal(resolveSkill(join(root, "dir-skill", "SKILL.md"), "/", known), join(root, "dir-skill", "SKILL.md"));
   assert.throws(() => resolveSkill("nope", root, known), /Unknown skill "nope". Known: commit/);
   assert.throws(() => resolveSkill("./missing", root, known), /Skill path does not exist/);
+});
+
+test("model aliases expand, keep a thinking suffix, and apply to modes and args alike", () => {
+  assert.equal(expandModelAlias("opus"), "claude-bridge/claude-opus-5-5");
+  assert.equal(expandModelAlias("sonnet:high"), "claude-bridge/claude-sonnet-5-5:high");
+  assert.equal(expandModelAlias("openai/gpt-6.2-sol"), "openai/gpt-6.2-sol");
+  assert.equal(resolveLaunch({ model: "opus" }, mode).model, "claude-bridge/claude-opus-5-5");
+  assert.equal(resolveLaunch({}, { ...mode, model: "sol" }).model, "openai/gpt-6.2-sol");
 });

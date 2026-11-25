@@ -17,9 +17,11 @@ rex run -s $REX_BLOCK -c <cwd> --label <label> --keep-open --focus=false --json 
      [--skill <file>]... [--append-system-prompt mode.md] @brief.md
 ```
 
-- **Model:** `provider/id[:thinking]` or a bare id, checked against `pi --list-models`. Unknown or ambiguous names fail with the closest matches. Default `openai/gpt-6.1-terra`.
+- **Model:** `provider/id[:thinking]`, a bare id, or an alias: `opus`, `sonnet`, `terra`, `sol` (each takes `:thinking` too). Checked against `pi --list-models`; unknown or ambiguous names fail with the closest matches. Default `openai/gpt-6.1-terra`. "An opus worker" is `agent({ mode: "worker", model: "opus", ... })`.
 - **Tools:** `readOnly` (default `true`) gives `read,bash,ffgrep,fffind,write,intercom` and tells the child to change nothing but its report. `readOnly: false` gives pi's default tools plus `intercom`, without `agent`. An explicit `tools` list replaces either; `write` and `intercom` are always added so the child can report.
 - **Completion:** the parent's intercom ID comes from `PI_INTERCOM_SESSION_ID`, which [pi-intercom](https://www.npmjs.com/package/pi-intercom) sets. Without it, the extension watches the report file and posts a message when it appears.
+- **Talking mid-task:** the child's intercom name is its label, by default the mode plus the task's first words (`worker-fix-the-runner-1a2b`). The parent can send it new instructions; the child asks the parent when blocked on a decision.
+- **Every brief** tells the child the parent can't see its tab, to lead with the answer and evidence, and how to use intercom.
 
 Read-only is a prompt instruction, not a sandbox: the child still has `bash`. Subagent tabs stay open after they report; close them yourself.
 
@@ -30,8 +32,8 @@ A mode presets the model, tools and a role prompt for a kind of job. The `agent`
 | Mode | Model | Access | For |
 | ---- | ----- | ------ | --- |
 | `scout` | `openai/gpt-6.1-terra` | read-only | Finding code and facts, reported with `path:line` evidence |
-| `worker` | `openai/gpt-6.2-sol` | read-write | Implementing a bounded change and verifying it |
-| `review` | `claude-bridge/claude-opus-5-5` | read-only | A strict one-shot review with findings and a verdict, following the `thermo-nuclear-code-quality-review` and `code-principles` skills |
+| `worker` | `openai/gpt-6.2-sol` | read-write | Implementing a bounded change and verifying it, following `code-principles` and `test-audit` |
+| `review` | `claude-bridge/claude-opus-5-5:high` | read-only | A strict one-shot review with findings and a verdict, following `thermo-nuclear-code-quality-review`, `code-principles` and `test-audit` |
 
 `review` is a single pass in a tab. For a review the agent can argue with and re-run, use [pi-review](../pi-review).
 
@@ -54,7 +56,7 @@ You update documentation only. Read the code first; never change it.
 | ----- | -------- | ------- |
 | `name` | yes | What `mode` refers to. Letters, digits, `_` and `-`. |
 | `description` | yes | One line, shown in the tool description. |
-| `model` | no | `provider/id[:thinking]`. Default `openai/gpt-6.1-terra`. |
+| `model` | no | `provider/id[:thinking]` or an alias. Default `openai/gpt-6.1-terra`. |
 | `readOnly` | no | Default `true`. As for the tool argument. |
 | `tools` | no | Exact allowlist, as a list or comma-separated. `write` and `intercom` are always added. |
 | `skills` | no | Skill names, or paths relative to the mode file. The child gets each with `--skill` and is told to read it before starting. |

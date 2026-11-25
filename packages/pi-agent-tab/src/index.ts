@@ -7,6 +7,7 @@ import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } fro
 import { Type } from "typebox";
 import {
   DEFAULT_MODEL,
+  MODEL_ALIASES,
   describeModes,
   discoverModes,
   expandPath,
@@ -71,7 +72,7 @@ async function resolveModel(pi: ExtensionAPI, requested: string): Promise<string
   throw new Error(`Model "${name}" ${why}. Closest: ${closest.join(", ")}`);
 }
 
-function makeLabel(task: string): string {
+function makeLabel(task: string, mode: string | undefined): string {
   const slug = task
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -80,7 +81,8 @@ function makeLabel(task: string): string {
     .slice(0, 3)
     .join("-")
     .slice(0, 24);
-  return `${slug || "agent"}-${randomBytes(2).toString("hex")}`;
+  // Mode first, so intercom lists read as "worker-fix-the-runner-1a2b".
+  return [mode, slug || (mode ? "" : "agent"), randomBytes(2).toString("hex")].filter(Boolean).join("-");
 }
 
 function buildBrief(o: {
@@ -104,18 +106,27 @@ function buildBrief(o: {
         `   intercom({ action: "send", to: "${o.parentIntercomId}", message: "Subagent ${o.label} finished. Report: ${o.reportPath}", noWake: false })`,
       ]
     : ["2. (The parent watches the report file; no message is needed.)"];
-  const ask = o.parentIntercomId
-    ? [
-        "",
-        `If you are blocked on a decision only the parent can make, use intercom({ action: "ask", to: "${o.parentIntercomId}", message: "..." }).`,
-      ]
-    : [];
+  const parent = o.parentIntercomId;
+  const conduct = [
+    "",
+    "## Working as a subagent",
+    "",
+    "- The parent cannot see this tab. The report is your only output, so make it complete on its own.",
+    "- Lead with the answer, back claims with `path:line` or the command and its output, and say what you verified versus inferred. Do not narrate your process.",
+    ...(parent
+      ? [
+          `- Talk to the parent over intercom (target \`${parent}\`). If you are blocked on a decision only it can make, ask: intercom({ action: "ask", to: "${parent}", message: "..." }) and wait for the reply. Otherwise do not message it before the final report.`,
+          "- The parent may message you mid-task to redirect you; follow its latest instruction.",
+        ]
+      : []),
+  ];
   const skills = o.skillFiles.length
     ? ["", "Before starting, read these skills and follow them:", ...o.skillFiles.map((f) => `- ${f}`)]
     : [];
   return [
     preamble,
     ...skills,
+    ...conduct,
     "",
     "## Task",
     "",
@@ -127,7 +138,6 @@ function buildBrief(o: {
     `1. Write your final report as markdown to \`${o.reportPath}\` with the write tool. Write it once, complete.`,
     ...signal,
     "3. Stop. Do not wait for a reply or poll for anything.",
-    ...ask,
     "",
   ].join("\n");
 }
@@ -205,6 +215,8 @@ export default function (pi: ExtensionAPI) {
           "A subagent means the agent tool: a pi process in its own Rex tab. Give agent a self-contained task; the subagent sees none of this conversation.",
           "Pick an agent mode when one fits the job (e.g. scout to find things, worker to change code, review to review it).",
           "After calling agent, keep working or end your turn. Never sleep, poll, `rex wait` or read the report early: the subagent sends an intercom message naming reportPath when done, then read the report.",
+          "Talk to a running subagent with intercom, using its label as `to`: send to redirect it, and answer its asks with intercom reply.",
+          `For "an opus worker" and the like, pass the mode plus a model alias: ${Object.keys(MODEL_ALIASES).join(", ")}.`,
         ],
         parameters: Type.Object({
           task: Type.String({
@@ -215,7 +227,9 @@ export default function (pi: ExtensionAPI) {
           mode: Type.Optional(Type.String({ description: "Mode name from the list in this tool's description." })),
           model: Type.Optional(
             Type.String({
-              description: `provider/id[:thinking] from pi --list-models. Default: the mode's, else ${DEFAULT_MODEL}.`,
+              description: `provider/id[:thinking] from pi --list-models, or an alias (${Object.entries(MODEL_ALIASES)
+                .map(([a, m]) => `${a} = ${m}`)
+                .join(", ")}), optionally with :thinking. Default: the mode's, else ${DEFAULT_MODEL}.`,
             }),
           ),
           tools: Type.Optional(
@@ -229,7 +243,10 @@ export default function (pi: ExtensionAPI) {
             }),
           ),
           label: Type.Optional(
-            Type.String({ description: "Tab label and session name. Default: derived from task, unique." }),
+            Type.String({
+              description:
+                "Tab label and intercom session name. Default: mode plus the task's first words, made unique.",
+            }),
           ),
           readOnly: Type.Optional(Type.Boolean({ description: "Default: the mode's, else true." })),
         }),
@@ -249,7 +266,7 @@ export default function (pi: ExtensionAPI) {
           const launch = resolveLaunch(params, mode);
           const model = await resolveModel(pi, launch.model);
           const skills = skillFiles(launch.skills, ctx.cwd);
-          const label = params.label?.trim().replace(/\s+/g, "-") || makeLabel(params.task);
+          const label = params.label?.trim().replace(/\s+/g, "-") || makeLabel(params.task, mode?.name);
 
           await mkdir(SCRATCH_ROOT, { recursive: true });
           const dir = await mkdtemp(join(SCRATCH_ROOT, `${label.replace(/[^\w.-]/g, "_")}-`));

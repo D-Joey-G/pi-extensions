@@ -42,6 +42,21 @@ export type Launch = {
 };
 
 export const DEFAULT_MODEL = "openai/gpt-6.1-terra";
+
+// Short names for the models people ask for by family ("an opus worker").
+export const MODEL_ALIASES: Record<string, string> = {
+  opus: "claude-bridge/claude-opus-5-5",
+  sonnet: "claude-bridge/claude-sonnet-5-5",
+  terra: "openai/gpt-6.1-terra",
+  sol: "openai/gpt-6.2-sol",
+};
+
+/** Expands an alias, keeping any `:thinking` suffix; other names pass through. */
+export function expandModelAlias(model: string): string {
+  const [name, ...thinking] = model.split(":");
+  const target = MODEL_ALIASES[name];
+  return target ? [target, ...thinking].join(":") : model;
+}
 const READ_ONLY_TOOLS = ["read", "bash", "ffgrep", "fffind", "write", "intercom"];
 // The child must always be able to write its report and signal the parent.
 const REQUIRED_TOOLS = ["write", "intercom"];
@@ -139,7 +154,7 @@ export function resolveLaunch(args: LaunchArgs, mode: Mode | undefined): Launch 
   const readOnly = args.readOnly ?? mode?.readOnly ?? true;
   const tools = args.tools ?? mode?.tools;
   return {
-    model: args.model?.trim() || mode?.model || DEFAULT_MODEL,
+    model: expandModelAlias(args.model?.trim() || mode?.model || DEFAULT_MODEL),
     readOnly,
     tools: tools
       ? [...new Set([...tools, ...REQUIRED_TOOLS])].join(",")
