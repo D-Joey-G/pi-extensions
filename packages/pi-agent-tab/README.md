@@ -30,8 +30,8 @@ A mode presets the model, tools and a role prompt for a kind of job. The `agent`
 | Mode | Model | Access | For |
 | ---- | ----- | ------ | --- |
 | `scout` | `openai/gpt-6.1-terra` | read-only | Finding code and facts, reported with `path:line` evidence |
-| `worker` | `openai/gpt-6.1-terra` | read-write | Implementing a bounded change and verifying it |
-| `review` | `claude-bridge/claude-opus-5-5` | read-only | A strict one-shot review with findings and a verdict |
+| `worker` | `openai/gpt-6.2-sol` | read-write | Implementing a bounded change and verifying it |
+| `review` | `claude-bridge/claude-opus-5-5` | read-only | A strict one-shot review with findings and a verdict, following the `thermo-nuclear-code-quality-review` and `code-principles` skills |
 
 `review` is a single pass in a tab. For a review the agent can argue with and re-run, use [pi-review](../pi-review).
 
@@ -79,6 +79,10 @@ Explicit arguments override the mode field by field: `model`, `readOnly`, `tools
 
 ## Install
 
+Not published to npm. Install it from GitHub:
+
 ```sh
-pi install npm:@djoeyg/pi-agent-tab
+pi install git:github.com/D-Joey-G/pi-extensions
 ```
+
+or add `packages/pi-agent-tab/src/index.ts` to the `extensions` filter of an existing entry for that source.

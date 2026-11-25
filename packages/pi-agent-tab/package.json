@@ -1,4 +1,5 @@
 {
+  "private": true,
   "name": "@djoeyg/pi-agent-tab",
   "version": "0.1.0",
   "description": "agent: launch a pi subagent in a background Rex tab that reports back over intercom",
@@ -29,14 +30,6 @@
   },
   "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-agent-tab#readme",
   "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
-  "files": [
-    "src",
-    "README.md",
-    "LICENSE"
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "test": "node --test test/*.test.ts"
   }

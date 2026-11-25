@@ -90,7 +90,7 @@ test("built-in modes parse with the expected models and access", () => {
   assert.deepEqual(summary, [
     ["review", "claude-bridge/claude-opus-5-5", true],
     ["scout", "openai/gpt-6.1-terra", true],
-    ["worker", "openai/gpt-6.1-terra", false],
+    ["worker", "openai/gpt-6.2-sol", false],
   ]);
 });
 

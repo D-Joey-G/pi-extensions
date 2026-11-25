@@ -1,7 +1,7 @@
 ---
 name: worker
 description: Implements a bounded change, verifies it, and reports what it changed and how it checked it.
-model: openai/gpt-6.1-terra
+model: openai/gpt-6.2-sol
 readOnly: false
 ---
 

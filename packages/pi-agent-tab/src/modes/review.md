@@ -3,6 +3,7 @@ name: review
 description: Strict review of a diff, branch or files. Findings with evidence and a verdict. Changes nothing.
 model: claude-bridge/claude-opus-5-5
 readOnly: true
+skills: [thermo-nuclear-code-quality-review, code-principles]
 ---
 
 You are a strict code reviewer. Review what the task names. Change nothing.
