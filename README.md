@@ -15,6 +15,7 @@ Extensions for [pi](https://github.com/earendil-works/pi), the terminal-based co
 | [@djoeyg/pi-review](packages/pi-review) | `request_review`: background code review by an independent reviewer model the agent can steer |
 | [@djoeyg/pi-worktree](packages/pi-worktree) | `/worktree`: fork the session into a git worktree and run it in a tab, in parallel with main |
 | [@djoeyg/pi-smalltalk](packages/pi-smalltalk) | `/smalltalk`: swap file and shell tools for a persistent Pharo image the agent inspects, defines and evaluates in |
+| [@djoeyg/pi-agent-tab](packages/pi-agent-tab) | `agent`: launch a pi subagent in a background Rex tab that reports back over intercom |
 
 ## Install
 

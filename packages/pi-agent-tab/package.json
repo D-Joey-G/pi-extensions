@@ -1,0 +1,40 @@
+{
+  "name": "@djoeyg/pi-agent-tab",
+  "version": "0.1.0",
+  "description": "agent: launch a pi subagent in a background Rex tab that reports back over intercom",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "subagent",
+    "rex"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "author": "Joey Goldman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-Joey-G/pi-extensions.git",
+    "directory": "packages/pi-agent-tab"
+  },
+  "homepage": "https://github.com/D-Joey-G/pi-extensions/tree/main/packages/pi-agent-tab#readme",
+  "bugs": "https://github.com/D-Joey-G/pi-extensions/issues",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
