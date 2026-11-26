@@ -17,7 +17,7 @@ rex run -s $REX_BLOCK -c <cwd> --label <label> --keep-open --focus=false --json 
      [--skill <file>]... [--append-system-prompt mode.md] @brief.md
 ```
 
-- **Model:** `provider/id[:thinking]`, a bare id, or an alias: `opus`, `sonnet`, `terra`, `sol` (each takes `:thinking` too). Checked against `pi --list-models`; unknown or ambiguous names fail with the closest matches. Default `openai/gpt-6.1-terra`. "An opus worker" is `agent({ mode: "worker", model: "opus", ... })`.
+- **Model:** `provider/id[:thinking]`, a bare id, or an alias: `opus`, `sonnet`, `terra`, `sol`, `carbon`, `neon`, `hydrogen` (each takes `:thinking` too). Checked against `pi --list-models`; unknown or ambiguous names fail with the closest matches. Default `openai/gpt-6.1-terra`. "An opus worker" is `agent({ mode: "worker", model: "opus", ... })`.
 - **Tools:** `readOnly` (default `true`) gives `read,bash,ffgrep,fffind,write,intercom` and tells the child to change nothing but its report. `readOnly: false` gives pi's default tools plus `intercom`, without `agent`. An explicit `tools` list replaces either; `write` and `intercom` are always added so the child can report.
 - **Completion:** the parent's intercom ID comes from `PI_INTERCOM_SESSION_ID`, which [pi-intercom](https://www.npmjs.com/package/pi-intercom) sets. Without it, the extension watches the report file and posts a message when it appears.
 - **Talking mid-task:** the child's intercom name is its label, by default the mode plus the task's first words (`worker-fix-the-runner-1a2b`). The parent can send it new instructions; the child asks the parent when blocked on a decision.

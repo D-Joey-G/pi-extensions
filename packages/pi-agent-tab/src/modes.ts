@@ -49,6 +49,9 @@ export const MODEL_ALIASES: Record<string, string> = {
   sonnet: "claude-bridge/claude-sonnet-5-5",
   terra: "openai/gpt-6.1-terra",
   sol: "openai/gpt-6.2-sol",
+  carbon: "cursor/gemini-4-carbon@300k",
+  neon: "cursor/gemini-4-neon@300k",
+  hydrogen: "cursor/gemini-4-hydrogen@300k",
 };
 
 /** Expands an alias, keeping any `:thinking` suffix; other names pass through. */
