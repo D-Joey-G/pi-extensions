@@ -307,6 +307,8 @@ export default function (pi: ExtensionAPI) {
               "--focus=false",
               "--json",
               "--",
+              // Background agents yield CPU and I/O to the user's foreground work.
+              ...(process.platform === "darwin" ? ["taskpolicy", "-c", "utility"] : []),
               "pi",
               ...piArgs,
               // File reference: the brief never passes through a shell as text.
